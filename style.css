@@ -306,3 +306,15 @@ td.b { color: var(--pilote-b); font-weight: 700; }
   .lateral { padding: 16px max(16px, env(safe-area-inset-right, 0px)) 16px max(16px, env(safe-area-inset-left, 0px)); }
 }
 @media (prefers-reduced-motion: reduce) { .tir-curseur { transition: none; } }
+
+/* ===== Onglets Analyse / Préparation ===== */
+.onglets { display: flex; gap: 4px; margin-left: 8px; }
+.onglets a {
+  text-decoration: none; color: var(--texte-2); font-weight: 600; padding: 6px 12px; border-radius: 8px;
+}
+.onglets a:hover { background: var(--surface-2); color: var(--texte); }
+.onglets a.actif { background: var(--surface-2); color: var(--texte); }
+.pastille {
+  font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 999px; margin-left: 4px;
+  background: var(--accent); color: #fff; vertical-align: 1px;
+}

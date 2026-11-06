@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Spirale — préparation</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="style.css?v=20261107001118">
+  <link rel="stylesheet" href="prep.css?v=20261107001118">
+</head>
+<body class="page-prep">
+  <header class="barre">
+    <a class="logo" href="index.html" title="Retour à l'analyse de vol">
+      <svg viewBox="0 0 32 32" width="24" height="24" aria-hidden="true">
+        <path d="M16 16m-2 0a2 2 0 1 0 4 0a4 4 0 1 0-8 0a6 6 0 1 0 12 0a8 8 0 1 0-16 0a10 10 0 1 0 20 0" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>
+      </svg>
+      <span class="logo-nom">Spirale</span>
+    </a>
+    <nav class="onglets" aria-label="Sections">
+      <a href="index.html">Analyse</a>
+      <a href="preparation.html" class="actif" aria-current="page">Préparation <span class="pastille">V1.2</span></a>
+    </nav>
+    <p class="version" data-version></p>
+  </header>
+
+  <main class="prep">
+    <!-- Réglages -->
+    <aside class="prep-reglages">
+      <section>
+        <h2>Circuit</h2>
+        <select id="p-circuit" aria-label="Circuit"></select>
+      </section>
+
+      <section>
+        <h2>Zone météo</h2>
+        <select id="p-zone" aria-label="Zone météo"></select>
+        <label class="case"><input type="checkbox" id="p-tout"> Appliquer à toutes les zones</label>
+        <label class="curseur">Plafond <output id="o-plafond"></output>
+          <input type="range" id="p-plafond" min="1500" max="4500" step="50"></label>
+        <label class="curseur">Vz des meilleurs thermiques <output id="o-vz"></output>
+          <input type="range" id="p-vz" min="1" max="6" step="0.1"></label>
+        <button id="p-zones-defaut" class="lien" type="button">Remettre les zones par défaut</button>
+      </section>
+
+      <section>
+        <h2>Vol</h2>
+        <label class="curseur">Marge au-dessus du relief <output id="o-marge"></output>
+          <input type="range" id="p-marge" min="50" max="400" step="10" value="150"></label>
+        <label class="curseur">MacCready <output id="o-mc"></output>
+          <input type="range" id="p-mc" min="0" max="4" step="0.1" value="2"></label>
+      </section>
+
+      <section>
+        <h2>Cheminement (ligne droite)</h2>
+        <label class="curseur">Efficacité <output id="o-eff"></output>
+          <input type="range" id="p-eff" min="0" max="1.5" step="0.05" value="1"></label>
+        <label class="curseur">Rayon d'aide de chaque thermique <output id="o-rayon"></output>
+          <input type="range" id="p-rayon" min="200" max="1500" step="50" value="500"></label>
+        <p class="aide">Là où beaucoup de thermiques sont proches, leurs zones se touchent et la ligne droite monte (effet « rue »).</p>
+      </section>
+
+      <div class="prep-actions">
+        <button id="p-calculer" class="btn principal" type="button">Calculer le trajet optimal</button>
+        <button id="p-igc" class="btn" type="button" disabled>Télécharger la trace IGC</button>
+        <p id="p-etat" class="etat" role="status"></p>
+      </div>
+    </aside>
+
+    <!-- Carte + profil -->
+    <section class="prep-centre">
+      <div id="p-carte" class="prep-carte"></div>
+      <div class="prep-profil"><canvas id="p-profil"></canvas></div>
+    </section>
+
+    <!-- Résultat -->
+    <aside class="prep-resultat">
+      <h2>Résultat sur le circuit</h2>
+      <div id="r-temps" class="r-temps">—</div>
+      <div id="r-vitesse" class="r-vitesse"></div>
+      <div id="r-detail" class="r-detail"></div>
+      <div class="r-table"><table id="r-branches"></table></div>
+      <p class="aide">Modèle théorique : thermiques kk7 (moyenne de nombreux vols), polaire Diana 2 provisoire, sans vent ni vol de pente.</p>
+      <p class="credits">Thermiques : <a href="https://thermal.kk7.ch" target="_blank" rel="noopener">thermal.kk7.ch</a> (M. von Känel, CC BY-NC-SA 4.0) · Relief : Mapzen Terrain Tiles · Carte : © OpenStreetMap, SRTM, style © OpenTopoMap (CC-BY-SA)</p>
+    </aside>
+  </main>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="version.js?v=20261107001118"></script>
+  <script src="prep.js?v=20261107001118"></script>
+</body>
+</html>
