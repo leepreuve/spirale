@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Spirale — analyse de vol</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="barre">
+    <div class="logo">
+      <svg viewBox="0 0 32 32" width="26" height="26" aria-hidden="true">
+        <path d="M16 16m-2 0a2 2 0 1 0 4 0a4 4 0 1 0-8 0a6 6 0 1 0 12 0a8 8 0 1 0-16 0a10 10 0 1 0 20 0" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+      </svg>
+      <span class="logo-nom">Spirale</span>
+      <span class="logo-sous">Analyse de vol IGC</span>
+    </div>
+    <div class="actions">
+      <span id="nom-fichier" class="nom-fichier"></span>
+      <button id="btn-autre" class="btn secondaire" hidden>Charger un autre vol</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- Écran d'accueil -->
+    <section id="accueil">
+      <div id="zone-depot" class="depot">
+        <svg class="depot-icone" viewBox="0 0 48 48" aria-hidden="true">
+          <path d="M24 30V10m0 0-7 7m7-7 7 7M10 30v6a2 2 0 0 0 2 2h24a2 2 0 0 0 2-2v-6" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <h1>Déposez votre fichier IGC ici</h1>
+        <p>Thermiques, transitions, finesses, vitesses, vent… L'analyse se fait entièrement dans votre navigateur : le fichier n'est envoyé nulle part.</p>
+        <div class="boutons">
+          <label class="btn principal">Choisir un fichier
+            <input type="file" id="fichier" accept=".igc,.IGC" hidden>
+          </label>
+          <button id="btn-demo" class="btn secondaire">Voir un vol de démo</button>
+        </div>
+        <p id="erreur" class="erreur" hidden></p>
+      </div>
+    </section>
+
+    <!-- Résultats -->
+    <section id="resultats" hidden>
+      <div id="infos-vol" class="infos"></div>
+
+      <div class="modes" role="tablist" aria-label="Type d'analyse">
+        <button data-vue="analyse" class="actif" role="tab">Analyse de vol</button>
+        <button data-vue="AAT" role="tab">Circuit AAT</button>
+        <button data-vue="CT" role="tab">Circuit CT</button>
+      </div>
+
+      <div class="grille-haut">
+        <div class="panneau carte-bloc">
+          <div id="carte"></div>
+          <div class="carte-pied">
+            <div class="bascule" role="group" aria-label="Couleur de la trace">
+              <button data-mode="phases" class="actif">Phases</button>
+              <button data-mode="vario">Vario</button>
+              <button data-mode="temps">Gain / perte</button>
+            </div>
+            <div id="legende" class="legende"></div>
+          </div>
+        </div>
+        <aside class="panneau">
+          <h2>Vol</h2>
+          <div id="kpi-general" class="tuiles"></div>
+        </aside>
+      </div>
+
+      <!-- Panneau du circuit (modes AAT et CT) -->
+      <div id="panneau-circuit" class="panneau" hidden>
+        <div class="panneau-titre">
+          <h2><span class="pastille circuit"></span><span id="titre-circuit">Circuit</span></h2>
+          <span id="source-circuit" class="discret"></span>
+        </div>
+        <div class="circuit-grille">
+          <div class="circuit-editeur">
+            <div id="liste-points" class="liste-points"></div>
+            <label id="ligne-temps-mini" class="ligne-temps-mini">Temps minimum
+              <input type="number" id="temps-mini" min="0" step="0.25" value="3"> h
+            </label>
+            <div class="boutons-circuit">
+              <button id="btn-dessin" class="btn secondaire">Ajouter des points sur la carte</button>
+              <button id="btn-circuit-igc" class="btn secondaire">Circuit déclaré (IGC)</button>
+              <button id="btn-effacer" class="btn secondaire">Effacer</button>
+            </div>
+            <p id="aide-circuit" class="aide discret"></p>
+          </div>
+          <div id="kpi-circuit" class="tuiles"></div>
+        </div>
+        <div class="table-wrap"><table id="table-branches"></table></div>
+      </div>
+
+      <div class="panneau">
+        <div class="panneau-titre">
+          <h2>Barogramme <span id="source-alt" class="discret"></span></h2>
+          <span id="curseur-info" class="curseur-info">Survolez le graphique pour suivre le vol sur la carte</span>
+        </div>
+        <div class="baro"><canvas id="barogramme"></canvas></div>
+      </div>
+
+      <!-- Gains et pertes de temps -->
+      <div class="panneau" id="panneau-temps">
+        <div class="panneau-titre">
+          <h2>Gains et pertes de temps</h2>
+          <label class="ref-mc">Vz de référence (MacCready)
+            <input type="number" id="mc" step="0.1" min="0.2"> m/s
+          </label>
+        </div>
+        <p id="temps-explication" class="discret explication"></p>
+        <div id="kpi-temps" class="tuiles"></div>
+        <h3 class="sous-titre">Thermique par thermique, transition par transition</h3>
+        <div class="temps-graphe"><canvas id="graphe-temps"></canvas></div>
+        <div class="deux-col listes-temps">
+          <div>
+            <h3 class="sous-titre perte">Où tu perds du temps</h3>
+            <ol id="liste-pertes" class="liste-temps"></ol>
+          </div>
+          <div>
+            <h3 class="sous-titre gain">Où tu vas vite</h3>
+            <ol id="liste-gains" class="liste-temps"></ol>
+          </div>
+        </div>
+      </div>
+
+      <div class="deux-col">
+        <div class="panneau">
+          <h2><span class="pastille thermique"></span>Thermiques</h2>
+          <div id="kpi-thermiques" class="tuiles"></div>
+        </div>
+        <div class="panneau">
+          <h2><span class="pastille transition"></span>Transitions</h2>
+          <div id="kpi-transitions" class="tuiles"></div>
+        </div>
+      </div>
+
+      <div class="deux-col">
+        <div class="panneau">
+          <h2>Répartition du temps</h2>
+          <div id="repartition"></div>
+        </div>
+        <div class="panneau">
+          <h2>Temps passé par taux de montée</h2>
+          <div class="histo"><canvas id="histo"></canvas></div>
+        </div>
+      </div>
+
+      <div class="panneau">
+        <div class="onglets" role="tablist">
+          <button data-onglet="T" class="actif" role="tab">Thermiques</button>
+          <button data-onglet="G" role="tab">Transitions</button>
+          <span class="discret onglets-aide">Cliquez une ligne pour la voir sur la carte</span>
+        </div>
+        <div class="table-wrap">
+          <table id="table-T"></table>
+          <table id="table-G" hidden></table>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div id="voile-depot" class="voile-depot" hidden><div>Lâchez le fichier IGC</div></div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="analyse.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
