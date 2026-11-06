@@ -5,243 +5,101 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Spirale — analyse de vol</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-  <link rel="stylesheet" href="style.css?v=202611061146">
+  <link rel="stylesheet" href="style.css?v=20261106120225">
 </head>
 <body>
   <header class="barre">
     <div class="logo">
-      <svg viewBox="0 0 32 32" width="26" height="26" aria-hidden="true">
-        <path d="M16 16m-2 0a2 2 0 1 0 4 0a4 4 0 1 0-8 0a6 6 0 1 0 12 0a8 8 0 1 0-16 0a10 10 0 1 0 20 0" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+      <svg viewBox="0 0 32 32" width="24" height="24" aria-hidden="true">
+        <path d="M16 16m-2 0a2 2 0 1 0 4 0a4 4 0 1 0-8 0a6 6 0 1 0 12 0a8 8 0 1 0-16 0a10 10 0 1 0 20 0" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>
       </svg>
       <span class="logo-nom">Spirale</span>
-      <span class="logo-sous">Analyse de vol IGC</span>
     </div>
-    <div class="actions">
-      <span id="nom-fichier" class="nom-fichier"></span>
-      <button id="btn-autre" class="btn secondaire" hidden>Charger un autre vol</button>
+    <div id="entete-vol" class="entete-vol"></div>
+    <div id="selecteurs" class="selecteurs" hidden>
+      <select id="choix-a" aria-label="Vol affiché"></select>
+      <select id="choix-b" aria-label="Duel contre"></select>
+      <label class="btn">Ajouter des vols…
+        <input type="file" id="fichiers" accept=".igc,.IGC" multiple hidden>
+      </label>
     </div>
   </header>
 
-  <main>
-    <!-- Écran d'accueil -->
-    <section id="accueil">
-      <div id="zone-depot" class="depot">
-        <svg class="depot-icone" viewBox="0 0 48 48" aria-hidden="true">
-          <path d="M24 30V10m0 0-7 7m7-7 7 7M10 30v6a2 2 0 0 0 2 2h24a2 2 0 0 0 2-2v-6" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-        <h1>Déposez votre fichier IGC ici</h1>
-        <p>Thermiques, transitions, finesses, vitesses, vent… L'analyse se fait entièrement dans votre navigateur : le fichier n'est envoyé nulle part.</p>
-        <div class="boutons">
-          <label class="btn principal">Choisir un fichier
-            <input type="file" id="fichier" accept=".igc,.IGC" hidden>
-          </label>
-          <button id="btn-demo" class="btn secondaire">Voir un vol de démo</button>
-        </div>
-        <p id="erreur" class="erreur" hidden></p>
+  <!-- Accueil -->
+  <main id="accueil" class="accueil">
+    <div id="zone-depot" class="depot">
+      <svg class="depot-icone" viewBox="0 0 48 48" aria-hidden="true">
+        <path d="M24 30V10m0 0-7 7m7-7 7 7M10 30v6a2 2 0 0 0 2 2h24a2 2 0 0 0 2-2v-6" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <h1>Déposez vos fichiers IGC</h1>
+      <p>Un vol pour l'analyser, deux vols ou plus pour les comparer en duel sur la même épreuve.
+        Tout se passe dans votre navigateur : les fichiers ne sont envoyés nulle part.</p>
+      <div class="boutons">
+        <label class="btn principal">Choisir des fichiers
+          <input type="file" id="fichiers-accueil" accept=".igc,.IGC" multiple hidden>
+        </label>
+        <button id="btn-demo" class="btn">Voir un duel de démo</button>
       </div>
-    </section>
-
-    <!-- Résultats -->
-    <section id="resultats" hidden>
-      <div id="infos-vol" class="infos"></div>
-
-      <div class="modes" role="tablist" aria-label="Type d'analyse">
-        <button data-vue="analyse" class="actif" role="tab">Analyse de vol</button>
-        <button data-vue="AAT" role="tab">Circuit AAT</button>
-        <button data-vue="CT" role="tab">Circuit CT</button>
-        <button data-vue="comparaison" role="tab">Comparaison</button>
-      </div>
-
-      <div class="grille-haut">
-        <div class="panneau carte-bloc">
-          <div id="carte"></div>
-          <div class="carte-pied">
-            <div class="bascule" role="group" aria-label="Couleur de la trace">
-              <button data-mode="phases" class="actif">Phases</button>
-              <button data-mode="vario">Vario</button>
-              <button data-mode="temps">Gain / perte</button>
-            </div>
-            <div id="legende" class="legende"></div>
-            <div class="calques" role="group" aria-label="Afficher sur la carte">
-              <span class="calques-lab">Afficher</span>
-              <button data-calque="circuit" class="actif" aria-pressed="true"><i class="pastille circuit"></i>Circuit</button>
-              <button data-calque="thermiques" class="actif" aria-pressed="true"><i class="pastille thermique"></i>Thermiques</button>
-              <button data-calque="transitions" class="actif" aria-pressed="true"><i class="pastille transition"></i>Transitions</button>
-            </div>
-          </div>
-        </div>
-        <aside class="panneau">
-          <h2>Vol</h2>
-          <div id="kpi-general" class="tuiles"></div>
-        </aside>
-      </div>
-
-      <!-- Panneau du circuit (modes AAT et CT) -->
-      <div id="panneau-circuit" class="panneau" hidden>
-        <div class="panneau-titre">
-          <h2><span class="pastille circuit"></span><span id="titre-circuit">Circuit</span></h2>
-          <span id="source-circuit" class="discret"></span>
-        </div>
-        <div class="circuit-grille">
-          <div class="circuit-editeur">
-            <div id="liste-points" class="liste-points"></div>
-            <label id="ligne-temps-mini" class="ligne-temps-mini">Temps minimum
-              <input type="number" id="temps-mini" min="0" step="0.25" value="3"> h
-            </label>
-            <div class="boutons-circuit">
-              <button id="btn-dessin" class="btn secondaire">Ajouter des points sur la carte</button>
-              <button id="btn-circuit-igc" class="btn secondaire">Circuit déclaré (IGC)</button>
-              <button id="btn-effacer" class="btn secondaire">Effacer</button>
-            </div>
-            <p id="aide-circuit" class="aide discret"></p>
-          </div>
-          <div id="kpi-circuit" class="tuiles"></div>
-        </div>
-        <div class="table-wrap"><table id="table-branches"></table></div>
-      </div>
-
-      <!-- Comparaison de deux vols -->
-      <div id="panneau-comparaison" class="panneau" hidden>
-        <div class="panneau-titre">
-          <h2>Comparaison de deux vols</h2>
-          <span id="comp-circuit" class="discret"></span>
-        </div>
-
-        <div id="comp-chargement" class="comp-chargement">
-          <p>Chargez le vol d'un autre pilote sur la même épreuve. L'avance et le retard sont calculés le long du circuit,
-            en tenant compte de l'altitude, et le bilan montre où se fait la différence.</p>
-          <div class="boutons-gauche">
-            <label class="btn principal">Charger le vol à comparer
-              <input type="file" id="fichier-b" accept=".igc,.IGC" hidden>
-            </label>
-            <button id="btn-demo-b" class="btn secondaire">Comparer avec un vol de démo</button>
-          </div>
-          <p class="discret petit">Vous pouvez aussi glisser le fichier IGC sur la page.</p>
-          <p id="comp-erreur" class="erreur" hidden></p>
-        </div>
-
-        <div id="comp-contenu" hidden>
-          <div class="comp-tete">
-            <div id="comp-pilotes" class="comp-pilotes"></div>
-            <div class="comp-reglages">
-              <label>Temps
-                <select id="comp-alignement">
-                  <option value="course">Chacun depuis son départ</option>
-                  <option value="reel">Heure réelle</option>
-                </select>
-              </label>
-              <label>Compensation altitude (MC)
-                <input type="number" id="comp-mc" step="0.1" min="0.2"> m/s
-              </label>
-              <button id="btn-changer-b" class="btn secondaire">Changer le vol B</button>
-            </div>
-          </div>
-
-          <div class="comp-direct">
-            <button id="comp-lecture" class="btn principal comp-play" aria-label="Lire le vol">▶</button>
-            <div class="comp-curseur">
-              <input type="range" id="comp-temps" min="0" max="100" value="100" aria-label="Moment du vol">
-              <div id="comp-lecture-txt" class="comp-lecture-txt"></div>
-            </div>
-          </div>
-          <div id="comp-etat" class="comp-etat"></div>
-
-          <h3 class="sous-titre">Avance et retard en direct</h3>
-          <div class="comp-graphe"><canvas id="graphe-avance"></canvas></div>
-          <h3 class="sous-titre">Altitudes</h3>
-          <div class="comp-graphe petit"><canvas id="graphe-alt-comp"></canvas></div>
-
-          <h3 class="sous-titre">Qui gagne grâce à quoi</h3>
-          <p id="comp-resume" class="comp-resume"></p>
-          <div class="comp-bilan">
-            <div class="comp-decomp"><canvas id="graphe-decomp"></canvas></div>
-            <ul id="comp-explications" class="comp-explications"></ul>
-          </div>
-
-          <h3 class="sous-titre">Pilote contre pilote</h3>
-          <div class="table-wrap"><table id="table-comp" class="table-comp"></table></div>
-
-          <h3 class="sous-titre">Branche par branche</h3>
-          <div class="table-wrap"><table id="table-comp-branches"></table></div>
-          <p class="discret petit">Avance compensée : écart de temps au même endroit du circuit, plus l'écart d'altitude converti en temps
-            au taux de montée MC. Le bilan « qui gagne grâce à quoi » répartit l'écart de temps total entre la spirale,
-            la vitesse et la finesse en transition, le cheminement et l'altitude de départ et d'arrivée.</p>
-        </div>
-      </div>
-
-      <div class="panneau">
-        <div class="panneau-titre">
-          <h2>Barogramme <span id="source-alt" class="discret"></span></h2>
-          <span id="curseur-info" class="curseur-info">Survolez le graphique pour suivre le vol sur la carte</span>
-        </div>
-        <div class="baro"><canvas id="barogramme"></canvas></div>
-      </div>
-
-      <!-- Gains et pertes de temps -->
-      <div class="panneau" id="panneau-temps">
-        <div class="panneau-titre">
-          <h2>Gains et pertes de temps</h2>
-          <label class="ref-mc">Vz de référence (MacCready)
-            <input type="number" id="mc" step="0.1" min="0.2"> m/s
-          </label>
-        </div>
-        <p id="temps-explication" class="discret explication"></p>
-        <div id="kpi-temps" class="tuiles"></div>
-        <h3 class="sous-titre">Thermique par thermique, transition par transition</h3>
-        <div class="temps-graphe"><canvas id="graphe-temps"></canvas></div>
-        <div class="deux-col listes-temps">
-          <div>
-            <h3 class="sous-titre perte">Où tu perds du temps</h3>
-            <ol id="liste-pertes" class="liste-temps"></ol>
-          </div>
-          <div>
-            <h3 class="sous-titre gain">Où tu vas vite</h3>
-            <ol id="liste-gains" class="liste-temps"></ol>
-          </div>
-        </div>
-      </div>
-
-      <div class="deux-col">
-        <div class="panneau">
-          <h2><span class="pastille thermique"></span>Thermiques</h2>
-          <div id="kpi-thermiques" class="tuiles"></div>
-        </div>
-        <div class="panneau">
-          <h2><span class="pastille transition"></span>Transitions</h2>
-          <div id="kpi-transitions" class="tuiles"></div>
-        </div>
-      </div>
-
-      <div class="deux-col">
-        <div class="panneau">
-          <h2>Répartition du temps</h2>
-          <div id="repartition"></div>
-        </div>
-        <div class="panneau">
-          <h2>Temps passé par taux de montée</h2>
-          <div class="histo"><canvas id="histo"></canvas></div>
-        </div>
-      </div>
-
-      <div class="panneau">
-        <div class="onglets" role="tablist">
-          <button data-onglet="T" class="actif" role="tab">Thermiques</button>
-          <button data-onglet="G" role="tab">Transitions</button>
-          <span class="discret onglets-aide">Cliquez une ligne pour la voir sur la carte</span>
-        </div>
-        <div class="table-wrap">
-          <table id="table-T"></table>
-          <table id="table-G" hidden></table>
-        </div>
-      </div>
-    </section>
+      <p class="version" data-version></p>
+    </div>
   </main>
 
-  <div id="voile-depot" class="voile-depot" hidden><div>Lâchez le fichier IGC</div></div>
+  <!-- Espace d'analyse -->
+  <main id="espace" class="espace" hidden>
+    <section class="zone-carte">
+      <div id="carte"></div>
+
+      <div class="ctrl haut-gauche">
+        <div class="segment" role="group" aria-label="Trace affichée">
+          <button data-filtre="tout" class="actif">Tout</button>
+          <button data-filtre="T">Montées</button>
+          <button data-filtre="G">Transitions</button>
+        </div>
+        <div class="segment bascules" role="group" aria-label="Étiquettes sur la carte">
+          <button data-etiquette="circuit" class="actif" aria-pressed="true">Circuit</button>
+          <button data-etiquette="montees" class="actif" aria-pressed="true">Montées</button>
+          <button data-etiquette="transitions" class="actif" aria-pressed="true">Transitions</button>
+        </div>
+      </div>
+
+      <div class="ctrl haut-droite">
+        <div class="etapes">
+          <button id="etape-prec" aria-label="Étape précédente">◀</button>
+          <span id="etape-nom">Vue d'ensemble</span>
+          <button id="etape-suiv" aria-label="Étape suivante">▶</button>
+        </div>
+        <label class="suivre"><input type="checkbox" id="suivre"> Suivre le planeur</label>
+      </div>
+
+      <div id="legende" class="ctrl bas-gauche legende"></div>
+    </section>
+
+    <section class="frise">
+      <button id="lecture" class="lecture" aria-label="Lire le vol">▶</button>
+      <div class="segment vitesses" role="group" aria-label="Vitesse de lecture">
+        <button data-vitesse="30" class="actif">×30</button>
+        <button data-vitesse="120">×120</button>
+      </div>
+      <div class="baro"><canvas id="barogramme"></canvas></div>
+      <div class="frise-droite">
+        <div id="direct" class="direct"></div>
+        <div class="largage">
+          <button id="fixer-largage" class="btn petit">Fixer le largage ici</button>
+          <button id="largage-auto" class="btn petit">Auto</button>
+        </div>
+      </div>
+    </section>
+
+    <aside id="lateral" class="lateral"></aside>
+  </main>
+
+  <div id="voile-depot" class="voile-depot" hidden><div>Lâchez les fichiers IGC</div></div>
+  <div id="toast" class="toast" role="alert" hidden></div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-  <script src="analyse.js?v=202611061146"></script>
-  <script src="app.js?v=202611061146"></script>
+  <script src="version.js?v=20261106120225"></script>
+  <script src="analyse.js?v=20261106120225"></script>
+  <script src="app.js?v=20261106120225"></script>
 </body>
 </html>

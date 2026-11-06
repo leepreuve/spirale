@@ -1,31 +1,32 @@
 /* =====================================================================
-   app.js — Affichage : carte, barogramme, stats, tableaux
+   app.js — Interface : carte, frise (barogramme + lecture), panneau Duel
    S'appuie sur analyse.js (objet global IGC), Leaflet et Chart.js.
+   Un seul curseur de temps (etat.t, en heure du vol A) pilote tout.
    ===================================================================== */
 (function () {
   'use strict';
 
   const $ = (s) => document.querySelector(s);
   const etat = {
-    analyse: null, carte: null, couches: {}, marqueur: null,
-    graphe: null, histo: null, modeCouleur: 'phases',
-    tCurseur: null, selection: null, redessin: false,
-    vue: 'analyse',          // 'analyse' | 'AAT' | 'CT'
-    circuit: [],             // [{ lat, lon, nom, nomAuto, rayon (m) ou null = défaut }]
-    tempsMini: 3 * 3600,     // temps minimum AAT (s)
-    dessin: false,           // ajout de points par clic sur la carte
-    resCircuit: null,
-    typeCircuit: 'CT',       // type de circuit affiché en mode "Analyse de vol"
-    calques: { circuit: true, thermiques: true, transitions: true }, // affichage sur la carte
-    nomFichier: '',
-    vol2: null,              // vol comparé : { analyse, nom }
-    comp: null,              // résultat de la comparaison
-    compIdx: 0,              // position du curseur dans la comparaison
-    compLecture: null,       // minuterie de lecture
-    compAlignement: 'course',
-    compMc: null,
-    mc: null,                // Vz de référence choisi (null = Vz moyen du vol)
-    temps: null              // résultat gains / pertes de temps
+    vols: [],               // { id, nom, vol (lu), largage (indice ou null), analyse, circ }
+    idA: null, idB: null,
+    circuit: [],            // zones déclarées (IGC)
+    typeCircuit: 'CT', typeForce: false,
+    tempsMini: 0,
+    alignement: 'course',   // 'course' (départs alignés) | 'reel'
+    mc: null,
+    comp: null, compErreur: null,
+    decalB: 0,              // heure A = heure B + decalB
+    t: null,                // curseur (heure du vol A, s depuis minuit UTC)
+    tMin: 0, tMax: 0,
+    vitesse: 30, lecture: false, dernierFrame: 0,
+    filtre: 'tout',
+    etiquettes: { circuit: true, montees: true, transitions: true },
+    suivre: false,
+    etapes: [], etape: 0,
+    uniteParcours: 'temps',
+    carte: null, couches: {}, planeurs: {},
+    baro: null, grapheParcours: null, redessin: false
   };
 
   // ----- Formatage ---------------------------------------------------
@@ -34,835 +35,353 @@
   const signe = (x, d = 1) => (x == null || !isFinite(x)) ? '—' : (x > 0 ? '+' : '') + nf(x, d);
   const p2 = (n) => String(n).padStart(2, '0');
   const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
-
+  const echapper = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   function fmtDuree(s) {
-    s = Math.round(s);
+    s = Math.round(Math.abs(s));
     const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), sec = s % 60;
     if (h) return `${h} h ${p2(m)}`;
     if (m) return `${m} min ${p2(sec)}`;
     return `${sec} s`;
   }
-  function fmtDureeTab(s) {
-    s = Math.round(s);
-    const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), sec = s % 60;
-    return h ? `${h}:${p2(m)}:${p2(sec)}` : `${m}:${p2(sec)}`;
+  function fmtChrono(s) {
+    s = Math.round(Math.abs(s));
+    return `${Math.floor(s / 3600)}:${p2(Math.floor(s % 3600 / 60))}:${p2(s % 60)}`;
   }
   function fmtHeure(t, avecSec) {
-    const a = etat.analyse;
-    if (a && a.date) {
-      const d = new Date(Date.UTC(a.date.y, a.date.m - 1, a.date.d) + t * 1000);
-      return d.toLocaleTimeString('fr-FR', avecSec
-        ? { hour: '2-digit', minute: '2-digit', second: '2-digit' }
-        : { hour: '2-digit', minute: '2-digit' });
-    }
     const s = ((Math.round(t) % 86400) + 86400) % 86400;
-    return p2(Math.floor(s / 3600)) + ':' + p2(Math.floor(s % 3600 / 60)) + (avecSec ? ':' + p2(s % 60) : '') + ' UTC';
+    // Heure locale de Paris si la date est connue, sinon UTC
+    const A = volA();
+    if (A && A.analyse.date) {
+      const d = A.analyse.date;
+      return new Date(Date.UTC(d.y, d.m - 1, d.d) + s * 1000).toLocaleTimeString('fr-FR',
+        avecSec ? { hour: '2-digit', minute: '2-digit', second: '2-digit' } : { hour: '2-digit', minute: '2-digit' });
+    }
+    return p2(Math.floor(s / 3600)) + ':' + p2(Math.floor(s % 3600 / 60)) + (avecSec ? ':' + p2(s % 60) : '');
   }
-  function fmtFinesse(f) {
-    if (f === Infinity) return '∞';
-    if (f == null || !isFinite(f)) return '—';
-    if (f > 200) return '> 200';
-    return nf(f, f < 100 ? 1 : 0);
-  }
-  function fmtEcart(s) {
-    const v = Math.abs(Math.round(s));
-    if (v === 0) return '0 s';
-    const sig = s >= 0 ? '+' : '−';
-    const m = Math.floor(v / 60), sec = v % 60;
-    return m ? `${sig}${m} min ${p2(sec)}` : `${sig}${sec} s`;
-  }
-  const fmtDist = (m) => m < 1000 ? `${nf(m)} m` : `${nf(m / 1000, 1)} km`;
-  const fleche = (dir) => `<span class="fleche" style="transform:rotate(${Math.round(dir + 180)}deg)">↑</span>`;
-
-  // ----- Couleurs ----------------------------------------------------
-  const couleurPhase = (p) => ({ R: css('--remorque'), T: css('--thermique'), G: css('--transition') }[p] || css('--remorque'));
-  const ECHELLE_VARIO = [
-    { max: -2, c: '#1e4f8f', lab: '< −2' },
-    { max: -1, c: '#3d80c4', lab: '−2…−1' },
-    { max: 0, c: '#8fb9dc', lab: '−1…0' },
-    { max: 1, c: '#f2cf4a', lab: '0…1' },
-    { max: 2, c: '#f2963a', lab: '1…2' },
-    { max: 3, c: '#e2561a', lab: '2…3' },
-    { max: Infinity, c: '#ac1f1f', lab: '> 3' }
-  ];
-  const couleurVario = (v) => ECHELLE_VARIO.find(e => v < e.max).c;
+  const fmtFinesse = (f) => (f === Infinity || f > 200) ? '> 200' : (f == null || !isFinite(f)) ? '—' : nf(f, f < 100 ? 1 : 0);
+  const fmtDist = (m) => Math.abs(m) < 1000 ? `${nf(m)} m` : `${nf(m / 1000, 1)} km`;
   const alpha = (hex, a) => {
     const h = hex.replace('#', '');
     const n = parseInt(h.length === 3 ? h.split('').map(c => c + c).join('') : h, 16);
     return `rgba(${n >> 16 & 255},${n >> 8 & 255},${n & 255},${a})`;
   };
-
-  // ===================================================================
-  // Chargement du fichier
-  // ===================================================================
-  function lireFichier(f) {
-    if (!f) return;
-    const r = new FileReader();
-    r.onload = () => charger(r.result, f.name);
-    r.onerror = () => erreur('Impossible de lire ce fichier.');
-    r.readAsText(f);
+  function indice(T, t) {
+    if (t <= T[0]) return 0;
+    if (t >= T[T.length - 1]) return T.length - 1;
+    let lo = 0, hi = T.length - 1;
+    while (hi - lo > 1) { const m = (lo + hi) >> 1; if (T[m] <= t) lo = m; else hi = m; }
+    return (t - T[lo] < T[hi] - t) ? lo : hi;
   }
-
-  function erreur(msg) {
-    if (!$('#resultats').hidden) {
-      // Message temporaire en haut de page (pas d'alert(), bloqué sur certains hébergements)
-      let toast = $('#toast');
-      if (!toast) {
-        toast = document.createElement('div');
-        toast.id = 'toast';
-        toast.className = 'toast';
-        toast.setAttribute('role', 'alert');
-        document.body.appendChild(toast);
-      }
-      toast.textContent = msg;
-      toast.hidden = false;
-      clearTimeout(erreur.minuteur);
-      erreur.minuteur = setTimeout(() => { toast.hidden = true; }, 6000);
-      return;
-    }
-    const el = $('#erreur');
+  function toast(msg) {
+    const el = $('#toast');
     el.textContent = msg;
     el.hidden = false;
+    clearTimeout(toast.m);
+    toast.m = setTimeout(() => { el.hidden = true; }, 6000);
   }
 
-  function charger(texte, nom) {
-    let a;
+  // ----- Version du site ----------------------------------------------
+  (function afficherVersion() {
+    const v = window.SPIRALE_VERSION;
+    if (!v) return;
+    const d = new Date(v.date);
+    const txt = `Version ${v.numero} · mise à jour le ${d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })} à ${d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`;
+    document.querySelectorAll('[data-version]').forEach(el => { el.textContent = txt; });
+    etat.texteVersion = txt;
+  })();
+
+  // ----- Couleurs ------------------------------------------------------
+  const couleurPhase = (p) => ({ T: css('--thermique'), G: css('--transition') }[p] || css('--remorque'));
+  const NOM_PHASE = { R: 'remorqué', T: 'montée', G: 'transition', S: 'au sol' };
+
+  // ===================================================================
+  // Vols
+  // ===================================================================
+  let compteurId = 0;
+  const volA = () => etat.vols.find(v => v.id === etat.idA) || null;
+  const volB = () => (etat.idB != null ? etat.vols.find(v => v.id === etat.idB) : null) || null;
+  const nomVol = (v) => (v.analyse.entete.pilote || v.analyse.entete.concours || v.nom.replace(/\.igc$/i, '') || '?');
+  const nomCourt = (v) => {
+    const n = nomVol(v).trim().split(/\s+/);
+    return n.length > 1 ? n[n.length - 1] : n[0];
+  };
+  const codeVol = (v) => v.analyse.entete.concours || nomVol(v).split(/\s+/).map(x => x[0]).join('').slice(0, 3).toUpperCase();
+
+  function ajouterVol(texte, nom) {
+    let vol;
     try {
-      a = IGC.analyser(IGC.lire(texte));
+      vol = IGC.lire(texte);
     } catch (e) {
-      console.error(e);
-      erreur(e.message || "Erreur pendant l'analyse du fichier.");
+      toast(`${nom} : ${e.message}`);
+      return null;
+    }
+    const v = { id: ++compteurId, nom, vol, largage: null };
+    analyserVol(v);
+    etat.vols.push(v);
+    return v;
+  }
+  function analyserVol(v) {
+    v.analyse = IGC.analyser(v.vol, v.largage != null ? { largage: v.largage } : null);
+  }
+
+  function lireFichiers(liste) {
+    const fichiers = [...(liste || [])].filter(f => f && /\.igc$/i.test(f.name));
+    if (!fichiers.length) { toast('Choisissez des fichiers .igc.'); return; }
+    const resultats = new Array(fichiers.length);
+    let restants = fichiers.length;
+    fichiers.forEach((f, k) => {
+      const r = new FileReader();
+      r.onload = () => { resultats[k] = [r.result, f.name]; fin(); };
+      r.onerror = () => { toast(`Impossible de lire ${f.name}.`); fin(); };
+      r.readAsText(f);
+    });
+    function fin() {
+      if (--restants > 0) return;
+      const ajoutes = resultats.filter(Boolean).map(([t, n]) => ajouterVol(t, n)).filter(Boolean);
+      apresAjout(ajoutes);
+    }
+  }
+
+  function apresAjout(ajoutes) {
+    if (!ajoutes.length) return;
+    const premier = etat.idA == null;
+    if (premier) etat.idA = ajoutes[0].id;
+    if (etat.idB == null) {
+      const autre = etat.vols.find(v => v.id !== etat.idA);
+      if (autre) etat.idB = autre.id;
+    }
+    toutAfficher(true);
+  }
+
+  // ===================================================================
+  // Circuit, calculs
+  // ===================================================================
+  function rayonDefaut(k, n, type) {
+    if (k === 0) return 5000;
+    if (k === n - 1) return 3000;
+    return type === 'AAT' ? 20000 : 500;
+  }
+
+  function choisirCircuit() {
+    const A = volA(), B = volB();
+    const source = (A && A.analyse.circuitIGC.length >= 2) ? A : (B && B.analyse.circuitIGC.length >= 2) ? B : null;
+    etat.circuit = source ? source.analyse.circuitIGC.map(p => Object.assign({}, p)) : [];
+    etat.tempsMini = source && source.analyse.tempsCircuitIGC ? source.analyse.tempsCircuitIGC : 0;
+    if (!etat.typeForce) {
+      const large = etat.circuit.slice(1, -1).some(p => p.rayon != null && p.rayon >= 5000);
+      etat.typeCircuit = etat.tempsMini || large ? 'AAT' : 'CT';
+    }
+  }
+
+  function zones() {
+    const n = etat.circuit.length;
+    return etat.circuit.map((p, k) => ({
+      lat: p.lat, lon: p.lon,
+      nom: p.nom || (k === 0 ? 'Départ' : k === n - 1 ? 'Arrivée' : 'P' + k),
+      rayon: p.rayon != null ? p.rayon : rayonDefaut(k, n, etat.typeCircuit),
+      forme: p.forme, demiAngle: p.demiAngle, rayon2: p.rayon2, demiAngle2: p.demiAngle2, style: p.style, a12: p.a12
+    }));
+  }
+  const nomPoint = (k, n) => (k === 0 ? 'D' : k === n - 1 ? 'A' : 'P' + k);
+
+  function departDe(v) {
+    return v.circ && v.circ.nbAtteints ? v.circ.tDepart : v.analyse.t[v.analyse.largage];
+  }
+
+  function calculer() {
+    const A = volA(), B = volB();
+    const Z = zones();
+    for (const v of [A, B]) {
+      if (v) v.circ = Z.length >= 2 ? IGC.analyserCircuit(v.analyse, Z, etat.typeCircuit, { tempsMini: etat.tempsMini }) : null;
+    }
+    etat.comp = null;
+    etat.compErreur = null;
+    etat.decalB = 0;
+    if (!B) return;
+    if (etat.alignement === 'course') etat.decalB = departDe(A) - departDe(B);
+    if (etat.mc == null) {
+      const vz = [A.analyse.totaux.vzMoyThermique, B.analyse.totaux.vzMoyThermique].filter(x => x > 0);
+      etat.mc = vz.length ? Math.round(vz.reduce((s, x) => s + x, 0) / vz.length * 10) / 10 : 1.5;
+    }
+    if (!A.circ || !B.circ) {
+      etat.compErreur = 'Aucun circuit déclaré dans ces fichiers : le duel compare seulement les altitudes et les positions.';
       return;
     }
-    etat.analyse = a;
-    etat.nomFichier = nom;
-    etat.comp = null;
-    etat.temps = null;
-    etat.resCircuit = null;
-    etat.selection = null;
-    etat.tCurseur = null;
-    $('#erreur').hidden = true;
+    const r = IGC.comparerVols({ a: A.analyse, circ: A.circ }, { a: B.analyse, circ: B.circ },
+      { mc: etat.mc, alignement: etat.alignement });
+    if (r.erreur) etat.compErreur = r.erreur;
+    else etat.comp = r;
+  }
+
+  // ===================================================================
+  // Affichage général
+  // ===================================================================
+  function toutAfficher(recadrer) {
+    const A = volA();
+    if (!A) return;
+    arreterLecture();
     $('#accueil').hidden = true;
-    $('#resultats').hidden = false;
-    $('#btn-autre').hidden = false;
-    $('#nom-fichier').textContent = nom;
-    document.title = `${nom} — Spirale`;
-
-    afficherInfos();
-    afficherKpi();
-    afficherCarte();
+    $('#espace').hidden = false;
+    $('#selecteurs').hidden = false;
+    choisirCircuit();
+    calculer();
+    remplirSelecteurs();
+    afficherEntete();
+    initCarte();
+    construireEtapes();
+    dessinerCarte(recadrer);
     afficherBarogramme();
-    afficherRepartition();
-    afficherHisto();
-    afficherTables();
-    etat.mc = null;
-    afficherTemps();
-    chargerCircuitIGC();
-    afficherVue();
-    window.scrollTo(0, 0);
+    afficherLateral();
+    const B = volB();
+    etat.tMin = A.analyse.t[A.analyse.deco] - 30;
+    etat.tMax = A.analyse.t[A.analyse.atterro] + 30;
+    if (B) {
+      etat.tMin = Math.min(etat.tMin, B.analyse.t[B.analyse.deco] + etat.decalB - 30);
+      etat.tMax = Math.max(etat.tMax, B.analyse.t[B.analyse.atterro] + etat.decalB + 30);
+    }
+    if (etat.t == null || recadrer) etat.t = departDe(A);
+    majCurseur();
+    if (etat.carte) setTimeout(() => etat.carte.invalidateSize(), 0);
   }
 
-  // ===================================================================
-  // En-tête du vol
-  // ===================================================================
-  function afficherInfos() {
-    const a = etat.analyse, e = a.entete || {};
-    const date = a.date
-      ? new Date(Date.UTC(a.date.y, a.date.m - 1, a.date.d)).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' })
-      : null;
+  function remplirSelecteurs() {
+    const opt = (v, sel, prefixe) => {
+      const d = v.analyse.date;
+      const date = d ? new Date(Date.UTC(d.y, d.m - 1, d.d)).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }) : v.nom;
+      return `<option value="${v.id}"${sel ? ' selected' : ''}>${prefixe || ''}${echapper(date)} · ${echapper(nomVol(v))}${v.analyse.entete.concours ? ' (' + echapper(v.analyse.entete.concours) + ')' : ''}</option>`;
+    };
+    $('#choix-a').innerHTML = etat.vols.map(v => opt(v, v.id === etat.idA)).join('');
+    const autres = etat.vols.filter(v => v.id !== etat.idA);
+    $('#choix-b').innerHTML = `<option value="">Pas de duel</option>` +
+      autres.map(v => opt(v, v.id === etat.idB, 'Duel : ')).join('');
+    $('#choix-b').disabled = !autres.length;
+  }
+
+  function afficherEntete() {
+    const A = volA(), a = A.analyse, e = a.entete;
+    const d = a.date ? new Date(Date.UTC(a.date.y, a.date.m - 1, a.date.d)).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }) : '';
+    const libre = a.departEnVol ? 'départ en vol' : a.largageAuto ? 'auto' : 'manuel';
     const items = [
-      ['Date', date],
-      ['Pilote', e.pilote],
-      ['Planeur', e.planeur],
-      ['Immatriculation', [e.immat, e.concours].filter(Boolean).join(' · ')],
-      ['Décollage', fmtHeure(a.totaux.heureDeco)],
-      ['Atterrissage', fmtHeure(a.totaux.heureAtterro)]
-    ].filter(x => x[1]);
-    $('#infos-vol').innerHTML = items.map(([l, v]) =>
-      `<div class="info"><span class="info-lab">${l}</span><span class="info-val">${echapper(v)}</span></div>`).join('');
-    $('#source-alt').textContent = a.sourceAlt === 'GPS' ? '· altitude GPS' : '· altitude pression (QNE)';
-  }
-  function echapper(s) {
-    return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  }
-
-  // ===================================================================
-  // Tuiles de statistiques
-  // ===================================================================
-  const tuile = (lab, val, unite = '', sous = '', vedette = false) =>
-    `<div class="tuile${vedette ? ' vedette' : ''}"><div class="t-lab">${lab}</div>` +
-    `<div class="t-val">${val}${unite ? `<span class="t-u">${unite}</span>` : ''}</div>` +
-    (sous ? `<div class="t-sous">${sous}</div>` : '') + '</div>';
-
-  function afficherKpi() {
-    const T = etat.analyse.totaux;
-
-    $('#kpi-general').innerHTML = [
-      tuile('Durée de vol', fmtDuree(T.dureeVol), '', `${fmtHeure(T.heureDeco)} → ${fmtHeure(T.heureAtterro)}`, true),
-      tuile('Distance parcourue', nf(T.distanceTrace / 1000, 1), 'km', 'le long de la trace', true),
-      tuile('Vitesse moyenne', nf(T.vitesseMoy * 3.6, 1), 'km/h', 'après largage'),
-      tuile('Altitude max', nf(T.altMax), 'm', `terrain ${nf(T.altDeco)} m`),
-      tuile('Éloignement max', nf(T.distMax / 1000, 1), 'km', 'du point de décollage'),
-      T.largage
-        ? tuile('Largage', nf(T.largage.alt), 'm', `${fmtHeure(T.largage.t)} · ${fmtDuree(T.largage.duree)} de remorqué`)
-        : tuile('Largage', '—', '', 'non détecté (autonome ?)'),
-      tuile('Vent moyen', T.vent ? `${fleche(T.vent.dir)} ${nf(T.vent.dir)}°` : '—', '',
-        T.vent ? `${nf(T.vent.vit * 3.6)} km/h, mesuré en spirale` : 'pas assez de spirales'),
-      tuile('Altitude mini', nf(T.altMin), 'm', 'après largage')
-    ].join('');
-
-    const m = T.meilleur;
-    $('#kpi-thermiques').innerHTML = [
-      tuile('Vz moyen', signe(T.vzMoyThermique, 2), 'm/s', 'gain net / temps en spirale', true),
-      tuile('Temps en spirale', nf(T.pctSpirale * 100), '%', fmtDuree(T.tempsSpirale), true),
-      tuile('Nombre de thermiques', nf(T.nbThermiques)),
-      tuile('Gain cumulé', nf(T.gainThermique), 'm', 'en thermique'),
-      tuile('Meilleur thermique', m ? signe(m.vzMoy, 1) : '—', m ? 'm/s' : '', m ? `${fmtHeure(m.debut)} · +${nf(m.gain)} m` : ''),
-      tuile('Sens de spirale', T.pctGauche == null ? '—' : `${nf(T.pctGauche * 100)} % G`, '',
-        T.pctGauche == null ? '' : `${nf((1 - T.pctGauche) * 100)} % à droite`),
-      tuile('Inclinaison moyenne', nf(T.inclinaisonMoy), '°', 'estimée'),
-      tuile('Vitesse en spirale', nf(T.vitAirSpirale && T.vitAirSpirale * 3.6), 'km/h', 'vitesse air estimée'),
-      tuile('Temps par tour', nf(T.tempsTourMoy, 1), 's')
-    ].join('');
-
-    $('#kpi-transitions').innerHTML = [
-      tuile('Finesse moyenne', fmtFinesse(T.finesseMoy), '', 'distance / hauteur perdue', true),
-      tuile('Vitesse moyenne', nf(T.vitTransition && T.vitTransition * 3.6), 'km/h', 'vitesse sol en transition', true),
-      tuile('Distance totale', nf(T.distTransition / 1000, 1), 'km', `${nf(T.distTransition / T.distanceTrace * 100)} % de la trace`),
-      tuile('Nombre de transitions', nf(T.nbTransitions)),
-      tuile('Distance moyenne', nf(T.distMoyTransition && T.distMoyTransition / 1000, 1), 'km', 'par transition'),
-      tuile('Vz moyen', signe(T.vzTransition, 2), 'm/s', 'taux de chute moyen'),
-      tuile('Temps en transition', fmtDuree(T.tempsTransition)),
-      tuile('Hauteur perdue', nf(T.perteTransition), 'm', 'cumulée'),
-      tuile('Détour moyen', T.detourMoy ? `+${nf((T.detourMoy - 1) * 100)}` : '—', T.detourMoy ? '%' : '', 'par rapport à la ligne droite')
-    ].join('');
+      d && `<b>${echapper(d)}</b>`,
+      `<b>${echapper(nomVol(A))}</b>`,
+      [e.planeur, e.immat].filter(Boolean).map(echapper).join(' · '),
+      `Décollage <b>${fmtHeure(a.t[a.deco])}</b>`,
+      `Vol libre dès <b>${fmtHeure(a.t[a.largage])}</b> · ${nf(a.alt[a.largage])} m (${libre})`,
+      `Atterrissage <b>${fmtHeure(a.t[a.atterro])}</b>`
+    ].filter(Boolean);
+    $('#entete-vol').innerHTML = items.map(x => `<span>${x}</span>`).join('');
+    document.title = `${nomVol(A)} — Spirale`;
   }
 
   // ===================================================================
   // Carte
   // ===================================================================
-  function afficherCarte() {
-    const a = etat.analyse;
-    if (!etat.carte) {
-      const carte = L.map('carte', { preferCanvas: true });
-      const topo = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
-        maxZoom: 17, attribution: '© OpenStreetMap, SRTM | © OpenTopoMap (CC-BY-SA)'
-      }).addTo(carte);
-      const plan = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        maxZoom: 19, attribution: '© OpenStreetMap'
-      });
-      const sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-        maxZoom: 18, attribution: '© Esri'
-      });
-      L.control.layers({ 'Relief': topo, 'Plan': plan, 'Satellite': sat }).addTo(carte);
-      // Si le fond de carte ne charge pas (hors ligne ou hébergement qui bloque les images)
-      [topo, plan, sat].forEach(c => c.on('tileerror', () => {
-        if ($('#note-fond')) return;
-        const note = document.createElement('span');
-        note.id = 'note-fond';
-        note.className = 'note-fond';
-        note.textContent = 'Fond de carte indisponible ici : la trace s\'affiche sur fond neutre.';
-        $('.carte-pied').appendChild(note);
-      }));
-      L.control.scale({ imperial: false }).addTo(carte);
-      etat.couches.trace = L.layerGroup().addTo(carte);
-      etat.couches.selection = L.layerGroup().addTo(carte);
-      etat.couches.circuit = L.layerGroup().addTo(carte);
-      etat.couches.vol2 = L.layerGroup().addTo(carte);
-      etat.couches.transitions = L.layerGroup().addTo(carte);
-      etat.couches.thermiques = L.layerGroup().addTo(carte);
-      etat.couches.temps = L.layerGroup().addTo(carte);
-      etat.couches.reperes = L.layerGroup().addTo(carte);
-      etat.couches.planeurs = L.layerGroup().addTo(carte);
-      carte.on('click', (e) => { if (etat.dessin) ajouterPoint(e.latlng.lat, e.latlng.lng); });
-      etat.marqueur = L.circleMarker([0, 0], { radius: 7, color: '#fff', weight: 2.5, fillColor: '#111', fillOpacity: 1 });
-      etat.carte = carte;
-    }
-    setTimeout(() => etat.carte.invalidateSize(), 0);
-
-    etat.couches.selection.clearLayers();
-    etat.couches.reperes.clearLayers();
-    etat.marqueur.remove();
-    dessinerTrace();
-
-    // Départ / arrivée
-    const P = a.points;
-    L.circleMarker([P[a.deco].lat, P[a.deco].lon], { radius: 6, color: '#fff', weight: 2, fillColor: '#2b8a3e', fillOpacity: 1 })
-      .bindTooltip('Décollage').addTo(etat.couches.reperes);
-    L.circleMarker([P[a.atterro].lat, P[a.atterro].lon], { radius: 6, color: '#fff', weight: 2, fillColor: '#c92a2a', fillOpacity: 1 })
-      .bindTooltip('Atterrissage').addTo(etat.couches.reperes);
-    if (a.largage > a.deco) {
-      L.circleMarker([P[a.largage].lat, P[a.largage].lon], { radius: 5, color: '#fff', weight: 2, fillColor: css('--remorque'), fillOpacity: 1 })
-        .bindTooltip(`Largage · ${nf(a.alt[a.largage])} m`).addTo(etat.couches.reperes);
-    }
-
-    const coords = [];
-    for (let i = a.deco; i <= a.atterro; i++) coords.push([P[i].lat, P[i].lon]);
-    etat.carte.fitBounds(L.latLngBounds(coords), { padding: [24, 24] });
+  function initCarte() {
+    if (etat.carte) return;
+    const carte = L.map('carte', { preferCanvas: true, zoomControl: false });
+    L.control.zoom({ position: 'topleft' }).addTo(carte);
+    const topo = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
+      maxZoom: 17, attribution: '© OpenStreetMap, SRTM | © OpenTopoMap (CC-BY-SA)'
+    }).addTo(carte);
+    const plan = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' });
+    const sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 18, attribution: '© Esri' });
+    L.control.layers({ Relief: topo, Plan: plan, Satellite: sat }, null, { position: 'bottomright' }).addTo(carte);
+    L.control.scale({ imperial: false, position: 'bottomright' }).addTo(carte);
+    for (const c of ['circuit', 'traceB', 'traceA', 'etiquettes', 'planeurs']) etat.couches[c] = L.layerGroup().addTo(carte);
+    // Clic près d'une trace : le curseur va à ce moment du vol
+    carte.on('click', (e) => {
+      const p = carte.latLngToContainerPoint(e.latlng);
+      let meilleur = null;
+      const chercher = (v, decal) => {
+        const a = v.analyse;
+        for (let i = a.deco; i <= a.atterro; i += 2) {
+          const q = carte.latLngToContainerPoint([a.points[i].lat, a.points[i].lon]);
+          const d = (q.x - p.x) ** 2 + (q.y - p.y) ** 2;
+          if (d < 400 && (!meilleur || d < meilleur.d)) meilleur = { d, t: a.t[i] + decal };
+        }
+      };
+      chercher(volA(), 0);
+      if (volB()) chercher(volB(), etat.decalB);
+      if (meilleur) { arreterLecture(); allerA(meilleur.t); }
+    });
+    etat.carte = carte;
   }
 
-  function dessinerTrace() {
-    const a = etat.analyse, P = a.points;
-    etat.couches.trace.clearLayers();
-    if (etat.vue === 'comparaison' && etat.comp && !etat.comp.erreur) {
-      dessinerCarteComparaison();
-      return;
-    }
-    if (etat.couches.vol2) { etat.couches.vol2.clearLayers(); etat.couches.planeurs.clearLayers(); }
-    let coulTemps = null;
-    if (etat.modeCouleur === 'temps' && etat.temps) {
-      coulTemps = new Array(P.length).fill(css('--remorque'));
-      for (const sg of etat.temps.segments) {
-        const c = couleurTemps(sg.gain / Math.max(1, sg.duree));
-        for (let i = sg.s; i <= sg.e; i++) coulTemps[i] = c;
-      }
-    }
-    const coul = (i) => coulTemps ? coulTemps[i]
-      : etat.modeCouleur === 'phases' ? couleurPhase(a.phaseDe[i]) : couleurVario(a.vz[i]);
+  function dessinerTrace(v, couche, couleur) {
+    const a = v.analyse, P = a.points;
+    couche.clearLayers();
+    const filtre = etat.filtre;
+    const coul = (i) => {
+      const ph = a.phaseDe[i];
+      const visible = filtre === 'tout' || ph === filtre;
+      return visible ? (couleur || couleurPhase(ph)) : 'fondu';
+    };
     let courant = coul(a.deco);
     let pts = [[P[a.deco].lat, P[a.deco].lon]];
+    const tracer = (c, liste) => {
+      if (liste.length < 2) return;
+      L.polyline(liste, c === 'fondu'
+        ? { color: css('--remorque'), weight: 1.5, opacity: 0.35, interactive: false }
+        : { color: c, weight: 3, opacity: 0.95, interactive: false }).addTo(couche);
+    };
     for (let i = a.deco + 1; i <= a.atterro; i++) {
       const c = coul(i);
       pts.push([P[i].lat, P[i].lon]);
       if (c !== courant || i === a.atterro) {
-        L.polyline(pts, { color: courant, weight: 3, opacity: 0.95, interactive: false }).addTo(etat.couches.trace);
+        tracer(courant, pts);
         pts = [[P[i].lat, P[i].lon]];
         courant = c;
       }
     }
+  }
+
+  function dessinerCarte(recadrer) {
+    const A = volA(), B = volB();
+    dessinerTrace(A, etat.couches.traceA, null);
+    if (B) dessinerTrace(B, etat.couches.traceB, css('--pilote-b'));
+    else etat.couches.traceB.clearLayers();
+    dessinerCircuit();
+    dessinerEtiquettes();
+    // Planeurs
+    etat.couches.planeurs.clearLayers();
+    const planeur = (v, cl, couleur) => L.circleMarker([v.analyse.points[v.analyse.deco].lat, v.analyse.points[v.analyse.deco].lon], {
+      radius: 7, color: '#fff', weight: 2.5, fillColor: couleur, fillOpacity: 1, interactive: false
+    }).bindTooltip(echapper(codeVol(v)), { permanent: true, direction: 'top', offset: [0, -8], className: 'et et-planeur ' + cl })
+      .addTo(etat.couches.planeurs);
+    etat.planeurs.a = planeur(A, 'a', B ? css('--pilote-a') : '#111');
+    etat.planeurs.b = B ? planeur(B, 'b', css('--pilote-b')) : null;
     // Légende
-    $('#legende').innerHTML = etat.modeCouleur === 'phases'
-      ? [['Remorqué', '--remorque'], ['Thermique', '--thermique'], ['Transition', '--transition']]
-        .map(([l, v]) => `<span><i style="background:${css(v)}"></i>${l}</span>`).join('')
-      : etat.modeCouleur === 'temps'
-        ? ECHELLE_TEMPS.map(e => `<span><i style="background:${e.c}"></i>${e.lab}</span>`).join('')
-        : ECHELLE_VARIO.map(e => `<span><i style="background:${e.c}"></i>${e.lab}</span>`).join('') + '<span>m/s</span>';
-    dessinerReperesTemps();
+    $('#legende').innerHTML = `<b>Phase</b>` +
+      `<span><i style="background:${css('--thermique')}"></i>Montée (spirale)</span>` +
+      `<span><i style="background:${css('--transition')}"></i>Transition</span>` +
+      `<span><i style="background:${css('--remorque')}"></i>Remorqué / sol</span>` +
+      (B ? `<span><i style="background:${css('--pilote-b')}"></i>${echapper(nomVol(B))}</span>` : '');
+    if (recadrer) cadrer(null);
   }
 
-  // Échelle gain / perte : secondes gagnées par seconde de vol
-  const ECHELLE_TEMPS = [
-    { max: -0.4, c: '#a51111', lab: 'Grosse perte' },
-    { max: -0.15, c: '#e8590c', lab: 'Perte' },
-    { max: -0.05, c: '#ffa94d', lab: 'Légère perte' },
-    { max: 0.05, c: '#adb5bd', lab: 'Dans ta moyenne' },
-    { max: 0.15, c: '#8ce99a', lab: 'Léger gain' },
-    { max: 0.4, c: '#37b24d', lab: 'Gain' },
-    { max: Infinity, c: '#1b6e2c', lab: 'Gros gain' }
-  ];
-  const couleurTemps = (r) => ECHELLE_TEMPS.find(e => r < e.max).c;
-
-  // Repères numérotés des plus grosses pertes / gains (mode "Gain / perte")
-  function dessinerReperesTemps() {
-    const g = etat.couches.temps;
-    if (!g) return;
-    g.clearLayers();
-    if (etat.modeCouleur !== 'temps' || !etat.temps) return;
-    const a = etat.analyse;
-    const placer = (liste, classe) => liste.forEach((sg, n) => {
-      const p = a.points[Math.floor((sg.s + sg.e) / 2)];
-      L.marker([p.lat, p.lon], {
-        icon: L.divIcon({ className: `repere-temps ${classe}`, html: String(n + 1), iconSize: [22, 22], iconAnchor: [11, 11] })
-      }).bindTooltip(`<b>${fmtEcart(sg.gain)}</b> · ${raisonSegment(sg)}`)
-        .on('click', () => selectionnerSegment(sg))
-        .addTo(g);
-    });
-    placer(etat.temps.pertes, 'perte');
-    placer(etat.temps.gains, 'gain');
-  }
-
-  // ===================================================================
-  // Barogramme
-  // ===================================================================
-  const pluginBandes = {
-    id: 'bandes',
-    beforeDatasetsDraw(chart) {
-      const a = etat.analyse;
-      if (!a) return;
-      const { ctx, chartArea: z, scales: { x } } = chart;
-      ctx.save();
-      ctx.beginPath();
-      ctx.rect(z.left, z.top, z.right - z.left, z.bottom - z.top);
-      ctx.clip();
-      for (const ph of a.phases) {
-        if (ph.type === 'G') continue;
-        const x0 = x.getPixelForValue(a.t[ph.s]), x1 = x.getPixelForValue(a.t[ph.e]);
-        ctx.fillStyle = alpha(couleurPhase(ph.type), ph.type === 'T' ? 0.14 : 0.12);
-        ctx.fillRect(x0, z.top, x1 - x0, z.bottom - z.top);
-      }
-      if (etat.selection) {
-        const x0 = x.getPixelForValue(a.t[etat.selection.s]), x1 = x.getPixelForValue(a.t[etat.selection.e]);
-        ctx.fillStyle = alpha(css('--selection'), 0.28);
-        ctx.fillRect(x0, z.top, x1 - x0, z.bottom - z.top);
-      }
-      ctx.restore();
-    },
-    afterDatasetsDraw(chart) {
-      const { ctx, chartArea: z, scales: { x } } = chart;
-      // Passages de circuit (départ, zones, arrivée)
-      const r = etat.resCircuit;
-      if (etat.calques.circuit && r && r.chemin.length) {
-        ctx.save();
-        ctx.strokeStyle = css('--circuit');
-        ctx.fillStyle = css('--circuit');
-        ctx.setLineDash([4, 4]);
-        ctx.lineWidth = 1.5;
-        ctx.font = '600 11px ' + Chart.defaults.font.family;
-        ctx.textAlign = 'center';
-        r.chemin.forEach((p, k) => {
-          const px = x.getPixelForValue(etat.analyse.t[p.i]);
-          if (px < z.left || px > z.right) return;
-          ctx.beginPath(); ctx.moveTo(px, z.top + 14); ctx.lineTo(px, z.bottom); ctx.stroke();
-          ctx.fillText(roleCourt(k, r.zones.length), px, z.top + 10);
-        });
-        ctx.restore();
-      }
-      if (etat.tCurseur == null) return;
-      const px = x.getPixelForValue(etat.tCurseur);
-      if (px < z.left || px > z.right) return;
-      ctx.save();
-      ctx.strokeStyle = css('--texte');
-      ctx.globalAlpha = 0.6;
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(px, z.top);
-      ctx.lineTo(px, z.bottom);
-      ctx.stroke();
-      ctx.restore();
-    }
-  };
-
-  function afficherBarogramme() {
-    const a = etat.analyse;
-    if (etat.graphe) etat.graphe.destroy();
-    Chart.defaults.color = css('--texte-2');
-    Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;
-    const grille = css('--grille');
-
-    const i0 = Math.max(0, a.deco - 15), i1 = Math.min(a.points.length - 1, a.atterro + 15);
-    const pas = Math.max(1, Math.ceil((i1 - i0 + 1) / 3000));
-    const dAlt = [], dVit = [], dVz = [];
-    for (let i = i0; i <= i1; i += pas) {
-      dAlt.push({ x: a.t[i], y: a.alt[i] });
-      dVit.push({ x: a.t[i], y: a.vit[i] * 3.6 });
-      dVz.push({ x: a.t[i], y: a.vz[i] });
-    }
-    const accent = css('--accent');
-
-    etat.graphe = new Chart($('#barogramme'), {
-      type: 'line',
-      data: {
-        datasets: [
-          { label: 'Altitude', data: dAlt, yAxisID: 'y', borderColor: accent, backgroundColor: alpha(accent, 0.12), fill: 'start', borderWidth: 1.5, pointRadius: 0 },
-          { label: 'Vitesse sol', data: dVit, yAxisID: 'y2', hidden: true, borderColor: css('--texte-2'), borderWidth: 1, pointRadius: 0 },
-          { label: 'Vario', data: dVz, yAxisID: 'y3', hidden: true, borderColor: css('--thermique'), borderWidth: 1, pointRadius: 0 }
-        ]
-      },
-      options: {
-        animation: false, responsive: true, maintainAspectRatio: false,
-        parsing: false, normalized: true,
-        interaction: { mode: 'nearest', axis: 'x', intersect: false },
-        scales: {
-          x: { type: 'linear', min: a.t[i0], max: a.t[i1], grid: { color: grille },
-            ticks: { callback: (v) => fmtHeure(v), maxTicksLimit: 10, maxRotation: 0 } },
-          y: { title: { display: true, text: 'Altitude (m)' }, grid: { color: grille } },
-          y2: { position: 'right', display: 'auto', title: { display: true, text: 'km/h' }, grid: { drawOnChartArea: false } },
-          y3: { position: 'right', display: 'auto', title: { display: true, text: 'm/s' }, grid: { drawOnChartArea: false } }
-        },
-        plugins: {
-          legend: { position: 'top', align: 'end', labels: { boxWidth: 12, boxHeight: 2 } },
-          tooltip: { enabled: false }
-        },
-        onHover: (ev, _els, chart) => {
-          const x = chart.scales.x.getValueForPixel(ev.x);
-          if (x >= chart.scales.x.min && x <= chart.scales.x.max) curseur(x);
-        },
-        onClick: (ev, _els, chart) => {
-          const x = chart.scales.x.getValueForPixel(ev.x);
-          const i = indiceProche(a.t, x);
-          const type = a.phaseDe[i];
-          const liste = type === 'T' ? a.thermiques : type === 'G' ? a.transitions : null;
-          if (!liste) return;
-          const k = liste.findIndex(p => i >= p.s && i <= p.e);
-          if (k >= 0) selectionner(type, k);
-        }
-      },
-      plugins: [pluginBandes]
-    });
-  }
-
-  function indiceProche(t, x) {
-    let lo = 0, hi = t.length - 1;
-    while (hi - lo > 1) { const m = (lo + hi) >> 1; if (t[m] < x) lo = m; else hi = m; }
-    return (x - t[lo] < t[hi] - x) ? lo : hi;
-  }
-
-  const NOM_PHASE = { R: 'remorqué', T: 'thermique', G: 'transition', S: 'au sol' };
-  function curseur(x) {
-    const a = etat.analyse;
-    const i = indiceProche(a.t, x);
-    etat.tCurseur = a.t[i];
-    const p = a.points[i];
-    etat.marqueur.setLatLng([p.lat, p.lon]);
-    if (!etat.carte.hasLayer(etat.marqueur)) etat.marqueur.addTo(etat.carte);
-    $('#curseur-info').textContent =
-      `${fmtHeure(a.t[i], true)} · ${nf(a.alt[i])} m · Vz ${signe(a.vz[i], 1)} m/s · ${nf(a.vit[i] * 3.6)} km/h · ${NOM_PHASE[a.phaseDe[i]]}`;
-    redessiner();
-  }
-  function redessiner() {
-    if (etat.redessin) return;
-    etat.redessin = true;
-    requestAnimationFrame(() => { etat.redessin = false; if (etat.graphe) etat.graphe.draw(); });
-  }
-
-  // ===================================================================
-  // Sélection d'un thermique / d'une transition
-  // ===================================================================
-  function selectionner(type, k) {
-    const a = etat.analyse;
-    const ph = (type === 'T' ? a.thermiques : a.transitions)[k];
-    etat.selection = { type, k, s: ph.s, e: ph.e };
-
-    const coords = [];
-    for (let i = ph.s; i <= ph.e; i++) coords.push([a.points[i].lat, a.points[i].lon]);
-    etat.couches.selection.clearLayers();
-    L.polyline(coords, { color: css('--selection'), weight: 9, opacity: 0.45, interactive: false }).addTo(etat.couches.selection);
-    etat.carte.fitBounds(L.latLngBounds(coords), { padding: [50, 50], maxZoom: 14 });
-
-    montrerOnglet(type);
-    document.querySelectorAll('tbody tr').forEach(tr => tr.classList.remove('actif'));
-    const ligne = document.querySelector(`#table-${type} tr[data-k="${k}"]`);
-    if (ligne) ligne.classList.add('actif');
-    redessiner();
-  }
-
-  // ===================================================================
-  // Répartition du temps + histogramme
-  // ===================================================================
-  function afficherRepartition() {
-    const r = etat.analyse.totaux.repartition;
-    const total = r.R + r.T + r.G || 1;
-    const lignes = [
-      ['Remorqué', r.R, '--remorque'],
-      ['Spirale (thermiques)', r.T, '--thermique'],
-      ['Ligne droite (transitions)', r.G, '--transition']
-    ].filter(x => x[1] > 0);
-    $('#repartition').innerHTML =
-      `<div class="barre-rep">${lignes.map(([, d, v]) => `<div style="width:${d / total * 100}%;background:${css(v)}"></div>`).join('')}</div>` +
-      `<div class="rep-liste">${lignes.map(([l, d, v]) =>
-        `<div class="rep-ligne"><i style="background:${css(v)}"></i><span>${l}</span><span class="pct">${nf(d / total * 100)} %</span><span class="dur">${fmtDuree(d)}</span></div>`).join('')}</div>`;
-  }
-
-  function afficherHisto() {
-    const h = etat.analyse.totaux.histo;
-    if (etat.histo) etat.histo.destroy();
-    const b = h.bornes;
-    const labels = h.minutes.map((_, k) =>
-      k === 0 ? `< ${nf(b[0], 0)}` : k === b.length ? `≥ ${nf(b[b.length - 1], 0)}` : `${nf(b[k - 1], 1)}–${nf(b[k], 1)}`);
-    const couleurs = h.minutes.map((_, k) => couleurVario(k === 0 ? -0.5 : k === b.length ? 4 : (b[k - 1] + b[k]) / 2));
-    etat.histo = new Chart($('#histo'), {
-      type: 'bar',
-      data: { labels, datasets: [{ data: h.minutes, backgroundColor: couleurs, borderRadius: 4, maxBarThickness: 36 }] },
-      options: {
-        animation: false, responsive: true, maintainAspectRatio: false,
-        scales: {
-          x: { title: { display: true, text: 'Vz (m/s)' }, grid: { display: false } },
-          y: { title: { display: true, text: 'minutes' }, grid: { color: css('--grille') }, beginAtZero: true }
-        },
-        plugins: {
-          legend: { display: false },
-          tooltip: { callbacks: { label: (c) => `${nf(c.parsed.y, 1)} min` } }
-        }
-      }
-    });
-  }
-
-  // ===================================================================
-  // Tableaux
-  // ===================================================================
-  function afficherTables() {
-    const a = etat.analyse;
-    $('#table-T').innerHTML =
-      `<thead><tr><th>N°</th><th>Début</th><th>Durée</th><th>Alt. entrée → sortie</th><th>Gain</th><th>Vz moy</th><th>Vz max</th><th>Sens</th><th>Tours</th><th>Inclinaison</th><th>V. air</th><th>Vent</th></tr></thead><tbody>` +
-      a.thermiques.map((x, k) => `<tr data-type="T" data-k="${k}">
-        <td>${k + 1}</td><td>${fmtHeure(x.debut)}</td><td>${fmtDureeTab(x.duree)}</td>
-        <td>${nf(x.altDebut)} → ${nf(x.altFin)} m</td>
-        <td class="${x.gain < 0 ? 'neg' : ''}">${signe(x.gain, 0)} m</td>
-        <td class="fort">${signe(x.vzMoy, 1)}</td><td>${signe(x.vzMax, 1)}</td>
-        <td>${x.sens === 'gauche' ? '↺ G' : '↻ D'}</td><td>${nf(x.tours, 1)}</td>
-        <td>${x.inclinaison ? nf(x.inclinaison) + '°' : '—'}</td>
-        <td>${x.vitAir ? nf(x.vitAir * 3.6) + ' km/h' : '—'}</td>
-        <td>${x.vent ? `${fleche(x.vent.dir)} ${nf(x.vent.dir)}° / ${nf(x.vent.vit * 3.6)}` : '—'}</td></tr>`).join('') +
-      '</tbody>';
-
-    $('#table-G').innerHTML =
-      `<thead><tr><th>N°</th><th>Début</th><th>Durée</th><th>Distance</th><th>Alt. début → fin</th><th>Hauteur perdue</th><th>Finesse</th><th>Vitesse</th><th>Vz moy</th><th>Détour</th></tr></thead><tbody>` +
-      a.transitions.map((x, k) => `<tr data-type="G" data-k="${k}">
-        <td>${k + 1}</td><td>${fmtHeure(x.debut)}</td><td>${fmtDureeTab(x.duree)}</td>
-        <td>${nf(x.dist / 1000, 1)} km</td><td>${nf(x.altDebut)} → ${nf(x.altFin)} m</td>
-        <td>${nf(x.perte)} m</td><td class="fort">${fmtFinesse(x.finesse)}</td>
-        <td>${nf(x.vitesse * 3.6)} km/h</td><td>${signe(x.vzMoy, 1)}</td>
-        <td>${x.detour ? '+' + nf((x.detour - 1) * 100) + ' %' : '—'}</td></tr>`).join('') +
-      '</tbody>';
-
-    document.querySelector('[data-onglet="T"]').textContent = `Thermiques (${a.thermiques.length})`;
-    document.querySelector('[data-onglet="G"]').textContent = `Transitions (${a.transitions.length})`;
-    montrerOnglet('T');
-  }
-
-  function montrerOnglet(type) {
-    document.querySelectorAll('[data-onglet]').forEach(b => b.classList.toggle('actif', b.dataset.onglet === type));
-    $('#table-T').hidden = type !== 'T';
-    $('#table-G').hidden = type !== 'G';
-  }
-
-  // ===================================================================
-  // Thermiques sur la carte
-  // En mode "Analyse de vol" : étiquette permanente avec le Vz et le gain.
-  // En mode circuit : simples points discrets (le circuit passe devant).
-  // ===================================================================
-  function dessinerThermiques() {
-    const a = etat.analyse;
-    const g = etat.couches.thermiques;
-    g.clearLayers();
-    if (!etat.calques.thermiques || etat.vue === 'comparaison') return;
-    a.thermiques.forEach((th, k) => {
-      if (th.gain <= 0) return;
-      L.circleMarker([th.centre.lat, th.centre.lon], {
-        radius: Math.max(4, Math.min(10, 3 + th.vzMoy * 2)),
-        color: '#fff', weight: 1.5, fillColor: css('--thermique'), fillOpacity: 0.95
-      })
-        .bindTooltip(`${signe(th.vzMoy, 1)} <span>· ${nf(th.gain)} m</span>`, {
-          permanent: true, direction: 'top', offset: [0, -6], className: 'etiquette-th'
-        })
-        .on('click', () => { if (!etat.dessin) selectionner('T', k); })
-        .addTo(g);
-    });
-  }
-
-  // Transitions : étiquette au milieu de chaque transition (vitesse sol et finesse)
-  function dessinerTransitions() {
-    const a = etat.analyse;
-    const g = etat.couches.transitions;
-    g.clearLayers();
-    if (!etat.calques.transitions || etat.vue === 'comparaison') return;
-    a.transitions.forEach((tr, k) => {
-      if (tr.dist < 2000 || tr.duree < 45) return; // on ignore les petits bouts de ligne droite
-      // Point situé à mi-distance de la transition
-      const moitie = a.cum[tr.s] + tr.dist / 2;
-      let i = tr.s;
-      while (i < tr.e && a.cum[i] < moitie) i++;
-      const p = a.points[i];
-      L.circleMarker([p.lat, p.lon], {
-        radius: 4, color: '#fff', weight: 1.5, fillColor: css('--transition'), fillOpacity: 1
-      })
-        .bindTooltip(`${nf(tr.vitesse * 3.6)} km/h <span>· f ${fmtFinesse(tr.finesse)}</span>`, {
-          permanent: true, direction: 'bottom', offset: [0, 6], className: 'etiquette-tr'
-        })
-        .on('click', () => { if (!etat.dessin) selectionner('G', k); })
-        .addTo(g);
-    });
-  }
-
-  function majBoutonsCalques() {
-    const sansCircuit = etat.circuit.length < 2;
-    document.querySelectorAll('[data-calque]').forEach(b => {
-      const actif = etat.calques[b.dataset.calque];
-      b.classList.toggle('actif', actif);
-      b.setAttribute('aria-pressed', String(actif));
-      if (b.dataset.calque === 'circuit') {
-        b.disabled = sansCircuit;
-        b.title = sansCircuit ? 'Aucun circuit : ouvrez « Circuit AAT » ou « Circuit CT » pour en dessiner un' : '';
-      } else {
-        b.disabled = etat.vue === 'comparaison';
-        b.title = b.disabled ? 'Masqué pendant la comparaison' : '';
-      }
-    });
-  }
-
-  // Type de circuit utilisé pour le calcul : celui du mode, ou en "Analyse de vol" le dernier choisi
-  function typeActif() { return (etat.vue === 'AAT' || etat.vue === 'CT') ? etat.vue : etat.typeCircuit; }
-
-  // ===================================================================
-  // Mode : Analyse de vol / Circuit AAT / Circuit CT
-  // ===================================================================
-  function afficherVue() {
-    const v = etat.vue;
-    document.querySelectorAll('[data-vue]').forEach(b => b.classList.toggle('actif', b.dataset.vue === v));
-    $('#panneau-circuit').hidden = v === 'analyse' || v === 'comparaison';
-    $('#panneau-comparaison').hidden = v !== 'comparaison';
-    $('.bascule').hidden = v === 'comparaison';
-    if (v !== 'comparaison') arreterLecture();
-    $('#ligne-temps-mini').hidden = v !== 'AAT';
-    $('#titre-circuit').textContent = v === 'AAT'
-      ? 'Circuit AAT — épreuve à zones'
-      : 'Circuit CT — circuit à points de virage';
-    if (v === 'analyse' || v === 'comparaison') basculerDessin(false);
-    else etat.typeCircuit = v;
-    dessinerThermiques();
-    dessinerTransitions();
-    majCircuit();
-    if (v === 'comparaison') calculerComparaison();
-    else if (etat.couches.vol2) dessinerTrace();
-    if (etat.calques.circuit && etat.circuit.length >= 2) cadrerCircuit();
-  }
-
-  // Rayons par défaut (modifiables dans la liste)
-  function rayonDefaut(k, n, type) {
-    if (k === 0) return 5000;          // départ : cylindre 5 km
-    if (k === n - 1) return 3000;      // arrivée : cylindre 3 km
-    return type === 'AAT' ? 20000 : 500; // zone AAT 20 km / PV 500 m
-  }
-  function roleCourt(k, n) { return k === 0 ? 'D' : k === n - 1 ? 'A' : String(k); }
-  function nomAuto(k, n) {
-    if (k === 0) return 'Départ';
-    if (k === n - 1 && n > 1) return 'Arrivée';
-    return (typeActif() === 'AAT' ? 'Zone ' : 'PV ') + k;
-  }
-  function renommer() {
-    const n = etat.circuit.length;
-    etat.circuit.forEach((p, k) => { if (p.nomAuto) p.nom = nomAuto(k, n); });
-  }
-  function zonesEffectives() {
-    const n = etat.circuit.length;
-    return etat.circuit.map((p, k) => ({
-      lat: p.lat, lon: p.lon, nom: p.nom || nomAuto(k, n),
-      rayon: p.rayon != null ? p.rayon : rayonDefaut(k, n, typeActif()),
-      forme: (p.forme === 'ligne' && k > 0 && k < n - 1) ? 'cylindre' : (p.forme || 'cylindre'),
-      demiAngle: p.demiAngle, rayon2: p.rayon2, demiAngle2: p.demiAngle2, style: p.style, a12: p.a12
-    }));
-  }
-
-  function chargerCircuitIGC(source) {
-    const a = source || etat.analyse;
-    const c = (a && a.circuitIGC) || [];
-    // On garde tout ce qui est déclaré : rayon propre à chaque zone, secteur, ligne…
-    etat.circuit = c.map(p => Object.assign({}, p, { nomAuto: !p.nom, rayon: p.rayon != null ? p.rayon : null }));
-    // Type probable : AAT si un temps minimum est déclaré ou si une zone intermédiaire est large
-    const zoneLarge = c.slice(1, -1).some(p => p.rayon != null && p.rayon >= 5000);
-    etat.typeCircuit = (a && a.tempsCircuitIGC) || zoneLarge ? 'AAT' : 'CT';
-    renommer();
-    $('#btn-circuit-igc').hidden = !c.length;
-    if (a && a.tempsCircuitIGC) {
-      etat.tempsMini = a.tempsCircuitIGC;
-      $('#temps-mini').value = +(a.tempsCircuitIGC / 3600).toFixed(2);
-    }
-  }
-
-  function decrireZone(z) {
-    if (z.forme === 'ligne') return `ligne de ${fmtDist(2 * z.rayon)}`;
-    let txt = z.forme === 'secteur' && (z.demiAngle || 45) < 180
-      ? `secteur ${nf(2 * (z.demiAngle || 45))}° de ${fmtDist(z.rayon)}`
-      : `cylindre de ${fmtDist(z.rayon)}`;
-    if (z.rayon2) txt += ` + cylindre de ${fmtDist(z.rayon2)}`;
-    return txt;
-  }
-
-  function statutPoint(k, n) {
-    const r = etat.resCircuit;
-    const v = r && r.verification ? r.verification[k] : null;
-    if (!v) return '';
-    if (v.ok) {
-      const quoi = k === 0 ? 'Départ' : k === n - 1 ? 'Arrivée' : 'Atteinte';
-      let txt = `✓ ${quoi} à ${fmtHeure(v.t, true)} · ${nf(v.alt)} m`;
-      if (v.tRetenu && k > 0 && k < n - 1) txt += ` · point retenu à ${fmtHeure(v.tRetenu)}`;
-      return `<div class="pt-statut ok">${txt}</div>`;
-    }
-    const z = r.zones[k];
-    const premierKo = r.verification.findIndex(x => !x.ok);
-    if (premierKo >= 0 && k > premierKo) {
-      return `<div class="pt-statut ko">✗ Non comptée : « ${echapper(r.zones[premierKo].nom)} » doit être validée avant</div>`;
-    }
-    const txt = k === 0 ? '✗ Départ non validé'
-      : z.forme === 'cylindre' && v.manque > 0
-        ? `✗ Non atteinte · passé à ${fmtDist(v.manque)} de la zone`
-        : `✗ Non atteinte · au plus près à ${fmtDist(v.dMin)} du centre`;
-    return `<div class="pt-statut ko">${txt}</div>`;
-  }
-
-  function ajouterPoint(lat, lon) {
-    etat.circuit.push({ lat, lon, nom: '', nomAuto: true, rayon: null });
-    renommer();
-    majCircuit();
-  }
-
-  function basculerDessin(actif) {
-    etat.dessin = actif;
-    $('#btn-dessin').classList.toggle('actif', actif);
-    $('#btn-dessin').textContent = actif ? 'Terminer l\'ajout de points' : 'Ajouter des points sur la carte';
-    $('#carte').classList.toggle('dessin', actif);
-    majAide();
-  }
-
-  function majAide() {
-    const n = etat.circuit.length;
-    let txt;
-    if (etat.dessin) txt = 'Cliquez sur la carte pour ajouter les points dans l\'ordre : départ, puis ' +
-      (etat.vue === 'AAT' ? 'les zones' : 'les points de virage') + ', puis l\'arrivée. Les repères se déplacent à la souris.';
-    else if (!n) txt = 'Aucun circuit déclaré dans ce fichier : cliquez « Ajouter des points sur la carte ».';
-    else if (n < 2) txt = 'Ajoutez au moins un départ et une arrivée.';
-    else txt = 'Les repères sont déplaçables sur la carte. Rayon vide = valeur par défaut.';
-    $('#aide-circuit').textContent = txt;
-    const src = etat.analyse && etat.analyse.circuitIGC.length ? 'circuit déclaré dans le fichier IGC disponible' : '';
-    $('#source-circuit').textContent = src;
-  }
-
-  function majCircuit() {
-    const a = etat.analyse;
-    if (!a || !etat.carte) return;
-    const Z = zonesEffectives();
-    etat.resCircuit = Z.length >= 2 ? IGC.analyserCircuit(a, Z, typeActif(), { tempsMini: etat.tempsMini }) : null;
-    if (etat.vue !== 'analyse') {
-      afficherEditeurCircuit(Z);
-      afficherResultatsCircuit();
-      majAide();
-    }
-    dessinerCircuit(Z);
-    majBoutonsCalques();
-    redessiner();
-  }
-
-  function cadrerCircuit() {
-    const a = etat.analyse;
+  function cadrer(etape) {
+    const A = volA(), B = volB();
     const b = L.latLngBounds([]);
-    for (let i = a.deco; i <= a.atterro; i += 10) b.extend([a.points[i].lat, a.points[i].lon]);
-    zonesEffectives().forEach(z => b.extend(L.latLng(z.lat, z.lon).toBounds(2 * z.rayon)));
-    etat.carte.fitBounds(b, { padding: [24, 24] });
+    const ajouter = (v, s, e) => { for (let i = s; i <= e; i += 5) b.extend([v.analyse.points[i].lat, v.analyse.points[i].lon]); };
+    if (etape && etape.s != null) {
+      ajouter(A, etape.s, etape.e);
+    } else {
+      ajouter(A, A.analyse.deco, A.analyse.atterro);
+      if (B) ajouter(B, B.analyse.deco, B.analyse.atterro);
+      zones().forEach(z => b.extend(L.latLng(z.lat, z.lon).toBounds(2 * z.rayon)));
+    }
+    if (b.isValid()) etat.carte.fitBounds(b, { padding: [40, 40] });
   }
 
-  function afficherEditeurCircuit(Z) {
-    const n = Z.length;
-    $('#liste-points').innerHTML = Z.map((z, k) => {
-      const extremite = k === 0 || k === n - 1;
-      const angle = nf(2 * (z.demiAngle || 45));
-      return `
-      <div class="pt-ligne" data-k="${k}">
-        <span class="pt-role" title="${k === 0 ? 'Départ' : k === n - 1 ? 'Arrivée' : 'Zone ' + k}">${roleCourt(k, n)}</span>
-        <input class="pt-nom" value="${echapper(z.nom)}" aria-label="Nom du point" title="${echapper(decrireZone(z))}">
-        <select class="pt-forme" aria-label="Forme de la zone">
-          <option value="cylindre"${z.forme === 'cylindre' ? ' selected' : ''}>Cylindre</option>
-          <option value="secteur"${z.forme === 'secteur' ? ' selected' : ''}>Secteur ${angle}°</option>
-          ${extremite ? `<option value="ligne"${z.forme === 'ligne' ? ' selected' : ''}>Ligne</option>` : ''}
-        </select>
-        <label class="pt-rayon" title="${z.forme === 'ligne' ? 'Demi-longueur de la ligne' : 'Rayon de la zone'}"><input class="pt-r" type="number" min="0.05" step="0.1"
-          value="${etat.circuit[k].rayon != null ? +(etat.circuit[k].rayon / 1000).toFixed(2) : ''}"
-          placeholder="${+(rayonDefaut(k, n, etat.vue) / 1000).toFixed(2)}" aria-label="Rayon (km)"> km</label>
-        <button class="pt-suppr" title="Supprimer ce point" aria-label="Supprimer">×</button>
-        ${statutPoint(k, n)}
-      </div>`;
-    }).join('');
-  }
-
-  function dessinerCircuit(Z) {
+  function dessinerCircuit() {
     const g = etat.couches.circuit;
     g.clearLayers();
-    if (!Z.length || !etat.calques.circuit) return;
-    const edition = etat.vue !== 'analyse';
+    const Z = zones();
+    if (Z.length < 2 || !etat.etiquettes.circuit) return;
     const coul = css('--circuit');
-    const n = Z.length;
-    const r0 = etat.resCircuit;
+    const A = volA(), r = A.circ;
     const prep = IGC.preparerZones(Z);
-    const style = { color: coul, weight: 1.5, fillColor: coul, fillOpacity: 0.08, interactive: false };
+    const style = { color: coul, weight: 1.5, fillColor: coul, fillOpacity: 0.07, interactive: false };
     prep.forEach((z) => {
       const c = IGC.contourZone(z);
       if (c.type === 'ligne') L.polyline(c.points, { color: coul, weight: 4, interactive: false }).addTo(g);
@@ -870,320 +389,122 @@
       else L.polygon(c.points, style).addTo(g);
       if (c.rayon2) L.circle([z.lat, z.lon], Object.assign({ radius: c.rayon2 }, style)).addTo(g);
     });
-    // Zones manquées : point de passage le plus proche
-    if (r0 && r0.verification) {
-      r0.verification.forEach((v, k) => {
-        if (v.ok || v.iProche == null || k === 0) return;
-        const p = etat.analyse.points[v.iProche];
-        L.circleMarker([p.lat, p.lon], { radius: 6, color: '#fff', weight: 2, fillColor: css('--erreur'), fillOpacity: 1 })
-          .bindTooltip(`Au plus près de « ${echapper(Z[k].nom)} » : ${fmtDist(v.dMin)} du centre, ${fmtHeure(etat.analyse.t[v.iProche])}`)
+    const n = Z.length, aat = etat.typeCircuit === 'AAT';
+    for (let k = 1; k < n; k++) {
+      const z0 = Z[k - 1], z1 = Z[k];
+      L.polyline([[z0.lat, z0.lon], [z1.lat, z1.lon]], { color: coul, weight: 2, opacity: 0.8, dashArray: aat ? '6 6' : null, interactive: false }).addTo(g);
+      L.circleMarker([(z0.lat + z1.lat) / 2, (z0.lon + z1.lon) / 2], { radius: 0, opacity: 0, fillOpacity: 0, interactive: false })
+        .bindTooltip(`B${k} · ${nf(IGC.distance(z0, z1) / 1000, 1)} km`, { permanent: true, direction: 'center', className: 'et et-branche' })
+        .addTo(g);
+    }
+    if (aat && r && r.chemin.length > 1) {
+      L.polyline(r.chemin.map(p => [p.lat, p.lon]), { color: coul, weight: 3, interactive: false }).addTo(g);
+    }
+    Z.forEach((z, k) => {
+      const v = r && r.verification ? r.verification[k] : null;
+      const cl = v ? (v.ok ? ' ok' : ' ko') : '';
+      L.marker([z.lat, z.lon], {
+        interactive: false,
+        icon: L.divIcon({ className: 'pv-icone' + cl, html: nomPoint(k, n), iconSize: [24, 24], iconAnchor: [12, 12] })
+      }).bindTooltip(`${echapper(z.nom)}${v && v.ok ? ` <span>${fmtHeure(v.t)}</span>` : v ? ' <span>✗</span>' : ''}`,
+        { permanent: true, direction: 'right', offset: [12, 0], className: 'et et-pv' + cl }).addTo(g);
+    });
+  }
+
+  function dessinerEtiquettes() {
+    const g = etat.couches.etiquettes;
+    g.clearLayers();
+    const a = volA().analyse;
+    if (etat.etiquettes.montees && etat.filtre !== 'G') {
+      a.thermiques.forEach(th => {
+        if (th.gain <= 0) return;
+        L.circleMarker([th.centre.lat, th.centre.lon], {
+          radius: Math.max(4, Math.min(9, 3 + th.vzMoy * 1.8)), color: '#fff', weight: 1.5, fillColor: css('--thermique'), fillOpacity: 1
+        }).bindTooltip(`${signe(th.vzMoy, 1)} <span>· ${nf(th.gain)} m</span>`, { permanent: true, direction: 'top', offset: [0, -6], className: 'et et-th' })
+          .on('click', (e) => { L.DomEvent.stopPropagation(e); arreterLecture(); allerA(a.t[th.s]); })
           .addTo(g);
       });
     }
-    // Branches entre les centres, avec leur distance
-    const r = etat.resCircuit;
-    const aat = r && r.type === 'AAT';
-    for (let k = 1; k < n; k++) {
-      const a0 = Z[k - 1], a1 = Z[k];
-      L.polyline([[a0.lat, a0.lon], [a1.lat, a1.lon]], {
-        color: coul, weight: aat ? 2 : 3, opacity: aat ? 0.7 : 0.9, dashArray: aat ? '6 6' : null, interactive: false
-      }).addTo(g);
-      const d = IGC.distance(a0, a1);
-      L.circleMarker([(a0.lat + a1.lat) / 2, (a0.lon + a1.lon) / 2], { radius: 0, opacity: 0, fillOpacity: 0, interactive: false })
-        .bindTooltip(`${nf(d / 1000, 1)} km`, { permanent: true, direction: 'center', className: 'etiquette-branche' })
-        .addTo(g);
-    }
-    // Chemin optimisé AAT (points retenus dans les zones)
-    if (aat && r.chemin.length > 1) {
-      L.polyline(r.chemin.map(p => [p.lat, p.lon]), { color: coul, weight: 3, interactive: false }).addTo(g);
-      r.chemin.slice(1, r.termine ? -1 : undefined).forEach(p => {
-        L.circleMarker([p.lat, p.lon], { radius: 5, color: coul, weight: 2, fillColor: '#fff', fillOpacity: 1 })
-          .bindTooltip(`Point retenu · ${fmtHeure(etat.analyse.t[p.i])}`).addTo(g);
+    if (etat.etiquettes.transitions && etat.filtre !== 'T') {
+      a.transitions.forEach(tr => {
+        if (tr.dist < 2000 || tr.duree < 45) return;
+        const moitie = a.cum[tr.s] + tr.dist / 2;
+        let i = tr.s;
+        while (i < tr.e && a.cum[i] < moitie) i++;
+        L.circleMarker([a.points[i].lat, a.points[i].lon], { radius: 3.5, color: '#fff', weight: 1.5, fillColor: css('--transition'), fillOpacity: 1 })
+          .bindTooltip(`${nf(tr.vitesse * 3.6)} km/h <span>· f ${fmtFinesse(tr.finesse)}</span>`, { permanent: true, direction: 'bottom', offset: [0, 5], className: 'et et-tr' })
+          .on('click', (e) => { L.DomEvent.stopPropagation(e); arreterLecture(); allerA(a.t[tr.s]); })
+          .addTo(g);
       });
     }
-    // Repères des points (déplaçables dans les modes circuit), avec leur nom et leur statut
-    Z.forEach((z, k) => {
-      const v = r0 && r0.verification ? r0.verification[k] : null;
-      const classe = v ? (v.ok ? ' ok' : ' ko') : '';
-      const statut = v ? (v.ok ? ` <span>✓ ${fmtHeure(v.t)}</span>` : ' <span>✗</span>') : '';
-      const m = L.marker([z.lat, z.lon], {
-        draggable: edition,
-        title: `${z.nom} · ${decrireZone(z)}`,
-        icon: L.divIcon({ className: 'pv-icone' + classe, html: roleCourt(k, n), iconSize: [24, 24], iconAnchor: [12, 12] })
-      }).bindTooltip(`${echapper(z.nom)}${statut}`, {
-        permanent: true, direction: 'right', offset: [12, 0], className: 'etiquette-pv' + classe
-      }).addTo(g);
-      if (edition) {
-        m.on('dragend', (e) => {
-          const ll = e.target.getLatLng();
-          etat.circuit[k].lat = ll.lat;
-          etat.circuit[k].lon = ll.lng;
-          majCircuit();
+  }
+
+  // ----- Étapes : vue d'ensemble, puis chaque branche (ou chaque montée) -----
+  function construireEtapes() {
+    const A = volA(), a = A.analyse, r = A.circ, Z = zones();
+    const etapes = [{ nom: "Vue d'ensemble" }];
+    if (r && r.chemin.length > 1) {
+      for (let k = 1; k < r.chemin.length; k++) {
+        etapes.push({ nom: `B${k} · ${Z[k - 1].nom} → ${Z[k].nom}`, s: r.chemin[k - 1].i, e: r.chemin[k].i });
+      }
+    } else {
+      a.thermiques.forEach((th, k) => {
+        if (th.gain > 0) etapes.push({ nom: `Montée ${k + 1} · ${signe(th.vzMoy, 1)} m/s`, s: th.s, e: th.e });
+      });
+    }
+    etat.etapes = etapes;
+    if (etat.etape >= etapes.length) etat.etape = 0;
+    $('#etape-nom').textContent = etapes[etat.etape].nom;
+  }
+  function allerEtape(k) {
+    const n = etat.etapes.length;
+    etat.etape = ((k % n) + n) % n;
+    const et = etat.etapes[etat.etape];
+    $('#etape-nom').textContent = et.nom;
+    cadrer(et);
+    if (et.s != null) { arreterLecture(); allerA(volA().analyse.t[et.s]); }
+  }
+
+  // ===================================================================
+  // Frise : barogramme + curseur
+  // ===================================================================
+  const pluginFrise = {
+    id: 'frise',
+    afterDatasetsDraw(chart) {
+      const A = volA();
+      if (!A) return;
+      const a = A.analyse, { ctx, chartArea: z, scales: { x } } = chart;
+      ctx.save();
+      // Largage
+      if (a.largage > a.deco || a.departEnVol) {
+        const px = x.getPixelForValue(a.t[a.largage]);
+        ctx.strokeStyle = css('--texte-2');
+        ctx.setLineDash([3, 3]);
+        ctx.beginPath(); ctx.moveTo(px, z.top); ctx.lineTo(px, z.bottom); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = css('--texte');
+        ctx.font = '600 11px ' + Chart.defaults.font.family;
+        ctx.fillText(a.departEnVol ? '⚑ départ en vol' : `⚑ largage (${a.largageAuto ? 'auto' : 'manuel'})`, px + 4, z.top + 11);
+      }
+      // Départ et arrivée du circuit (vol A)
+      if (A.circ && A.circ.nbAtteints) {
+        ctx.strokeStyle = css('--circuit');
+        ctx.fillStyle = css('--circuit');
+        ctx.font = '700 10px ' + Chart.defaults.font.family;
+        const n = A.circ.zones.length;
+        A.circ.verification.forEach((v, k) => {
+          if (!v.ok) return;
+          const px = x.getPixelForValue(v.t);
+          ctx.globalAlpha = 0.5;
+          ctx.beginPath(); ctx.moveTo(px, z.bottom - 8); ctx.lineTo(px, z.bottom); ctx.stroke();
+          ctx.globalAlpha = 1;
+          ctx.fillText(nomPoint(k, n), px - 4, z.bottom - 10);
         });
       }
-    });
-  }
-
-  function afficherResultatsCircuit() {
-    const r = etat.resCircuit;
-    if (!r) {
-      $('#kpi-circuit').innerHTML = '';
-      $('#table-branches').innerHTML = '';
-      return;
-    }
-    const nbBranches = r.zones.length - 1;
-    const faites = Math.max(0, r.nbAtteints - 1);
-    const statut = r.termine
-      ? `<div class="tuile vedette ok"><div class="t-lab">Statut</div><div class="t-val">Terminé ✓</div><div class="t-sous">arrivée ${fmtHeure(r.tArrivee)}</div></div>`
-      : `<div class="tuile vedette ko"><div class="t-lab">Statut</div><div class="t-val">${r.nbAtteints ? `${faites}/${nbBranches} branches` : 'Non parti'}</div><div class="t-sous">${echapper(r.raison || '')}</div></div>`;
-    const sousVitesse = r.type === 'AAT' && r.termine && r.duree < r.tempsMini
-      ? `calculée sur ${fmtDuree(r.tempsMini)} (temps mini)` : 'sur le circuit';
-    const g = r.global || {};
-    $('#kpi-circuit').innerHTML = [
-      statut,
-      tuile('Vitesse', r.vitesse ? nf(r.vitesse * 3.6, 1) : '—', r.vitesse ? 'km/h' : '', r.vitesse ? sousVitesse : 'circuit non terminé', true),
-      tuile('Distance', nf(r.distance / 1000, 1), 'km',
-        r.type === 'AAT' ? (r.termine ? 'optimisée dans les zones' : 'réalisée') : (r.termine ? 'circuit validé' : 'réalisée'), true),
-      tuile('Temps de circuit', r.nbAtteints ? fmtDuree(r.duree) : '—', '',
-        r.type === 'AAT' ? `temps mini ${fmtDuree(r.tempsMini)}` : ''),
-      tuile('Départ', r.nbAtteints ? fmtHeure(r.tDepart) : '—', '', r.nbAtteints ? `à ${nf(r.altDepart)} m` : ''),
-      tuile('Distance nominale', nf(r.distanceNominale / 1000, 1), 'km', 'entre les centres'),
-      tuile('Vz moyen', signe(g.vzT, 2), 'm/s', 'thermiques du circuit'),
-      tuile('Temps en spirale', g.pctSpirale != null ? nf(g.pctSpirale * 100) : '—', '%', 'pendant le circuit'),
-      tuile('Finesse', fmtFinesse(g.finesse), '', 'transitions du circuit'),
-      tuile('Vitesse en transition', g.vitG ? nf(g.vitG * 3.6) : '—', 'km/h', 'pendant le circuit')
-    ].join('');
-
-    $('#table-branches').innerHTML = r.branches.length ?
-      `<thead><tr><th>Branche</th><th>Départ</th><th>Durée</th><th>Distance</th><th>Vitesse</th><th>Vz therm.</th><th>Spirale</th><th>Finesse</th><th>V. transition</th></tr></thead><tbody>` +
-      r.branches.map((b, k) => `<tr data-branche="${k}">
-        <td>${echapper(b.de)} → ${echapper(b.a)}</td><td>${fmtHeure(b.debut)}</td><td>${fmtDureeTab(b.duree)}</td>
-        <td>${nf(b.dist / 1000, 1)} km</td><td class="fort">${b.vitesse ? nf(b.vitesse * 3.6, 1) + ' km/h' : '—'}</td>
-        <td>${signe(b.vzT, 1)}</td><td>${b.pctSpirale != null ? nf(b.pctSpirale * 100) + ' %' : '—'}</td>
-        <td>${fmtFinesse(b.finesse)}</td><td>${b.vitG ? nf(b.vitG * 3.6) + ' km/h' : '—'}</td></tr>`).join('') + '</tbody>'
-      : '';
-  }
-
-  // ===================================================================
-  // Gains et pertes de temps
-  // ===================================================================
-  function raisonSegment(sg) {
-    if (sg.type === 'T') {
-      if (sg.sansGain) return `Spirale sans gain (${signe(sg.hauteur, 0)} m en ${fmtDureeTab(sg.duree)})`;
-      let txt = sg.gain < 0
-        ? `Thermique faible : ${signe(sg.vz, 1)} m/s pendant ${fmtDureeTab(sg.duree)}`
-        : `Bon thermique : ${signe(sg.vz, 1)} m/s, +${nf(sg.hauteur)} m`;
-      const extra = [];
-      if (sg.centrage >= 20) extra.push(`centrage ${fmtDuree(sg.centrage)} perdu`);
-      if (sg.sortie >= 20) extra.push(`sortie tardive ${fmtDuree(sg.sortie)} perdue`);
-      return extra.length ? `${txt} (${extra.join(', ')})` : txt;
-    }
-    const base = `${nf(sg.vEq * 3.6)} km/h équivalent · ${nf(sg.directe / 1000, 1)} km, finesse ${fmtFinesse(sg.finesse)}`;
-    let txt = (sg.gain < 0 ? 'Transition lente : ' : 'Transition rapide : ') + base;
-    if (sg.gain < 0 && sg.detour >= 30) txt += `, détours ${fmtDuree(sg.detour)}`;
-    return txt;
-  }
-
-  function selectionnerSegment(sg) { selectionner(sg.type, sg.k); }
-
-  function afficherTemps() {
-    const a = etat.analyse;
-    const r = IGC.analyserTemps(a, { mc: etat.mc });
-    etat.temps = r;
-    const R = r.resume;
-    $('#mc').value = (Math.round(r.mc * 10) / 10).toFixed(1);
-
-    $('#temps-explication').innerHTML =
-      `Référence : <b>${nf(r.mc, 1)} m/s</b> en thermique${etat.mc ? '' : ' (ton Vz moyen du vol)'} et ` +
-      `<b>${nf(r.vRef && r.vRef * 3.6)} km/h</b> de vitesse équivalente en transition (ta moyenne). ` +
-      `Chaque mètre perdu en transition compte pour le temps qu'il faut pour le regagner à ${nf(r.mc, 1)} m/s. ` +
-      `Mets ton calage MacCready ou le Vz d'un pilote de référence pour te comparer à un autre niveau.`;
-
-    const t = (lab, v, sous, classe) =>
-      `<div class="tuile ${classe || ''}"><div class="t-lab">${lab}</div><div class="t-val">${v}</div>${sous ? `<div class="t-sous">${sous}</div>` : ''}</div>`;
-    const nbT = r.segments.filter(x => x.type === 'T' && !x.sansGain).length || 1;
-    $('#kpi-temps').innerHTML = [
-      t('Thermiques forts', fmtEcart(R.thermGagne), 'plus rapides que la référence', 'gain'),
-      t('Thermiques faibles', fmtEcart(R.thermPerdu), 'plus lents que la référence', 'perte'),
-      t('Transitions rapides', fmtEcart(R.transGagne), 'au-dessus de ta moyenne', 'gain'),
-      t('Transitions lentes', fmtEcart(R.transPerdu), 'sous ta moyenne', 'perte'),
-      t('Centrage', fmtEcart(-R.centrage), `≈ ${fmtDuree(R.centrage / nbT)} par thermique`, 'perte'),
-      t('Sorties tardives', fmtEcart(-R.sortie), 'à rester quand ça faiblit', R.sortie > 0 ? 'perte' : ''),
-      t('Spirales sans gain', R.nbSansGain ? fmtEcart(-R.tempsSansGain) : '0', `${R.nbSansGain} tentative${R.nbSansGain > 1 ? 's' : ''}`, R.nbSansGain ? 'perte' : ''),
-      t('Détours', fmtEcart(-R.detour), 'zigzags en transition', 'perte')
-    ].join('');
-
-    // Graphique : un bâton par thermique / transition, dans l'ordre du vol
-    if (etat.grapheTemps) etat.grapheTemps.destroy();
-    const segs = r.segments;
-    etat.grapheTemps = new Chart($('#graphe-temps'), {
-      type: 'bar',
-      data: {
-        labels: segs.map(s => `${s.type === 'T' ? 'Th' : 'Tr'} ${s.k + 1} · ${fmtHeure(s.debut)}`),
-        datasets: [{
-          data: segs.map(s => s.gain / 60),
-          backgroundColor: segs.map(s => couleurTemps(s.gain / Math.max(1, s.duree))),
-          borderRadius: 3, maxBarThickness: 28
-        }]
-      },
-      options: {
-        animation: false, responsive: true, maintainAspectRatio: false,
-        scales: {
-          x: { grid: { display: false }, ticks: { maxRotation: 0, autoSkip: true, callback: (v, i) => segs[i] ? fmtHeure(segs[i].debut) : '' } },
-          y: { title: { display: true, text: 'minutes gagnées (+) / perdues (−)' }, grid: { color: css('--grille') } }
-        },
-        plugins: {
-          legend: { display: false },
-          tooltip: { callbacks: { title: (it) => it[0].label, label: (c) => `${fmtEcart(segs[c.dataIndex].gain)} · ${raisonSegment(segs[c.dataIndex])}` } }
-        },
-        onClick: (_e, els) => { if (els && els.length) selectionnerSegment(segs[els[0].index]); }
-      }
-    });
-
-    const ligne = (sg, n, classe) => `<li class="${classe}" data-idx="${segs.indexOf(sg)}">
-      <span class="lt-num">${n + 1}</span><span class="lt-val">${fmtEcart(sg.gain)}</span>
-      <span class="lt-txt"><b>${fmtHeure(sg.debut)}</b> · ${raisonSegment(sg)}</span></li>`;
-    $('#liste-pertes').innerHTML = r.pertes.length
-      ? r.pertes.map((s, n) => ligne(s, n, 'perte-li')).join('')
-      : '<li class="vide">Aucune perte notable</li>';
-    $('#liste-gains').innerHTML = r.gains.length
-      ? r.gains.map((s, n) => ligne(s, n, 'gain-li')).join('')
-      : '<li class="vide">Rien qui sorte du lot</li>';
-
-    if (etat.modeCouleur === 'temps') dessinerTrace();
-  }
-
-  // ===================================================================
-  // Comparaison de deux vols
-  // ===================================================================
-  const nomPilote = (an, fichier) =>
-    (an.entete && (an.entete.pilote || an.entete.concours)) || String(fichier || '').replace(/\.igc$/i, '') || '?';
-  const nomA = () => nomPilote(etat.analyse, etat.nomFichier);
-  const nomB = () => (etat.vol2 ? nomPilote(etat.vol2.analyse, etat.vol2.nom) : 'B');
-  const nomDe = (cote) => (cote === 'a' ? nomA() : nomB());
-  const avantage = (x) => (Math.abs(x) < 3 ? '≈ égalité' : `${x > 0 ? 'A' : 'B'} +${fmtDuree(Math.abs(x))}`);
-
-  const FACTEURS = {
-    vz: { nom: 'Spirale', grace: 'à la spirale', sur: 'sur la spirale',
-      detail: (m) => `Vz moyen ${signe(m.vz, 2)} m/s, ${nf(m.st.tempsT / m.st.duree * 100)} % du temps en spirale` },
-    vg: { nom: 'Vitesse en transition', grace: 'à la vitesse en transition', sur: 'sur la vitesse en transition',
-      detail: (m) => `${nf(m.vg * 3.6)} km/h` },
-    ld: { nom: 'Finesse en transition', grace: 'à la finesse en transition', sur: 'sur la finesse en transition',
-      detail: (m) => `finesse ${nf(m.ld, 1)}` },
-    k: { nom: 'Cheminement', grace: 'au cheminement', sur: 'sur le cheminement',
-      detail: (m) => `${nf(m.k * 100)} km en transition pour 100 km de circuit` },
-    e2: { nom: 'Altitude départ / arrivée', grace: "à l'altitude de départ et d'arrivée", sur: "sur l'altitude de départ et d'arrivée",
-      detail: (m) => `départ ${nf(m.st.hDebut)} m, fin ${nf(m.st.hFin)} m` }
-  };
-
-  function lireFichierB(f) {
-    if (!f) return;
-    const r = new FileReader();
-    r.onload = () => chargerB(r.result, f.name);
-    r.onerror = () => erreurB('Impossible de lire ce fichier.');
-    r.readAsText(f);
-  }
-
-  function erreurB(msg) {
-    const el = $('#comp-erreur');
-    el.textContent = msg;
-    el.hidden = false;
-    $('#comp-chargement').hidden = false;
-    $('#comp-contenu').hidden = true;
-  }
-
-  function chargerB(texte, nom) {
-    let b;
-    try {
-      b = IGC.analyser(IGC.lire(texte));
-    } catch (e) {
-      erreurB(e.message || "Erreur pendant l'analyse du fichier.");
-      return;
-    }
-    arreterLecture();
-    etat.vol2 = { analyse: b, nom };
-    etat.compMc = null;
-    etat.compIdx = null;
-    $('#comp-erreur').hidden = true;
-    // Le vol A n'a pas de circuit : on prend celui déclaré dans le vol B
-    if (etat.circuit.length < 2 && b.circuitIGC.length >= 2) chargerCircuitIGC(b);
-    if (etat.vue !== 'comparaison') { etat.vue = 'comparaison'; afficherVue(); }
-    else { majCircuit(); calculerComparaison(); }
-  }
-
-  function calculerComparaison() {
-    const a = etat.analyse, v2 = etat.vol2;
-    $('#comp-chargement').hidden = !!v2;
-    $('#comp-contenu').hidden = !v2;
-    etat.comp = null;
-    if (!v2) { dessinerTrace(); return; }
-    const Z = zonesEffectives();
-    if (Z.length < 2) {
-      erreurB('Il faut un circuit pour comparer, et aucun des deux fichiers n\'en déclare. Dessinez-le dans « Circuit AAT » ou « Circuit CT », puis revenez ici.');
-      dessinerTrace();
-      return;
-    }
-    const type = typeActif();
-    $('#comp-circuit').textContent = `Circuit ${type} : ${Z.map(z => z.nom).join(' → ')}`;
-    const circA = IGC.analyserCircuit(a, Z, type, { tempsMini: etat.tempsMini });
-    const circB = IGC.analyserCircuit(v2.analyse, Z, type, { tempsMini: etat.tempsMini });
-    if (etat.compMc == null) {
-      const vz = [a.totaux.vzMoyThermique, v2.analyse.totaux.vzMoyThermique].filter(x => x > 0);
-      etat.compMc = vz.length ? Math.round(vz.reduce((s, x) => s + x, 0) / vz.length * 10) / 10 : 1.5;
-    }
-    $('#comp-mc').value = etat.compMc.toFixed(1);
-    $('#comp-alignement').value = etat.compAlignement;
-    const r = IGC.comparerVols({ a, circ: circA }, { a: v2.analyse, circ: circB },
-      { mc: etat.compMc, alignement: etat.compAlignement });
-    if (r.erreur) {
-      erreurB(`${r.erreur} Vérifiez que les deux vols correspondent bien au même circuit.`);
-      dessinerTrace();
-      return;
-    }
-    etat.comp = r;
-    $('#comp-erreur').hidden = true;
-    afficherPilotes();
-    afficherGraphesComparaison();
-    afficherBilan();
-    afficherTablesComparaison();
-    $('#comp-temps').max = String(r.grille.length - 1);
-    if (etat.compIdx == null || etat.compIdx >= r.grille.length) etat.compIdx = r.grille.length - 1;
-    $('#comp-temps').value = String(etat.compIdx);
-    dessinerTrace();
-    majCurseurComparaison();
-  }
-
-  function afficherPilotes() {
-    const ligne = (cl, nom, an) => `<span class="pilote"><span class="badge ${cl}">${cl.toUpperCase()}</span>
-      <span><b>${echapper(nom)}</b><br><span class="discret">${echapper([an.entete.planeur, an.entete.immat, an.entete.concours].filter(Boolean).join(' · '))}</span></span></span>`;
-    $('#comp-pilotes').innerHTML = ligne('a', nomA(), etat.analyse) + ligne('b', nomB(), etat.vol2.analyse);
-  }
-
-  function fmtTauCourt(tau) {
-    if (!etat.comp || !etat.comp.course) return fmtHeure(tau);
-    const s = Math.max(0, Math.round(tau));
-    return `${Math.floor(s / 3600)}:${p2(Math.floor(s % 3600 / 60))}`;
-  }
-
-  // Ligne verticale du curseur sur les graphiques de comparaison
-  const pluginCurseurComp = {
-    id: 'curseurComp',
-    afterDatasetsDraw(chart) {
-      const r = etat.comp;
-      if (!r || etat.compIdx == null) return;
-      const { ctx, chartArea: z, scales: { x, y } } = chart;
-      ctx.save();
-      // ligne du zéro (graphique d'avance)
-      if (chart === etat.grapheAvance && y && y.min < 0 && y.max > 0) {
-        const py = y.getPixelForValue(0);
-        ctx.strokeStyle = css('--texte-2');
-        ctx.globalAlpha = 0.6;
-        ctx.beginPath(); ctx.moveTo(z.left, py); ctx.lineTo(z.right, py); ctx.stroke();
-      }
-      const px = x.getPixelForValue(r.grille[etat.compIdx].tau);
-      if (px >= z.left && px <= z.right) {
+      // Curseur
+      if (etat.t != null) {
+        const px = x.getPixelForValue(etat.t);
         ctx.strokeStyle = css('--texte');
-        ctx.globalAlpha = 0.7;
         ctx.lineWidth = 1.5;
         ctx.beginPath(); ctx.moveTo(px, z.top); ctx.lineTo(px, z.bottom); ctx.stroke();
       }
@@ -1191,393 +512,535 @@
     }
   };
 
-  function indiceGrille(tau) {
-    const g = etat.comp.grille;
-    return Math.max(0, Math.min(g.length - 1, Math.round((tau - g[0].tau) / etat.comp.pas)));
+  function serieAlt(v, decal) {
+    const a = v.analyse, i0 = Math.max(0, a.deco - 10), i1 = Math.min(a.points.length - 1, a.atterro + 10);
+    const pas = Math.max(1, Math.ceil((i1 - i0) / 2500));
+    const data = [], idx = [];
+    for (let i = i0; i <= i1; i += pas) { data.push({ x: a.t[i] + decal, y: a.alt[i] }); idx.push(i); }
+    return { data, idx };
   }
 
-  function afficherGraphesComparaison() {
-    const r = etat.comp, g = r.grille;
-    const cA = css('--pilote-a'), cB = css('--pilote-b'), grille = css('--grille');
-    if (etat.grapheAvance) etat.grapheAvance.destroy();
-    if (etat.grapheAltComp) etat.grapheAltComp.destroy();
-    const echelleX = () => ({
-      type: 'linear', min: g[0].tau, max: g[g.length - 1].tau, grid: { color: grille },
-      ticks: { callback: (v) => fmtTauCourt(v), maxTicksLimit: 8, maxRotation: 0 },
-      title: { display: true, text: r.course ? 'temps depuis le départ de chacun' : 'heure' }
-    });
-    const survol = (ev, _els, chart) => {
-      if (!ev || ev.x == null) return;
-      const x = chart.scales.x.getValueForPixel(ev.x);
-      if (x >= chart.scales.x.min && x <= chart.scales.x.max) allerA(indiceGrille(x));
-    };
-    const options = (titreY) => ({
-      animation: false, responsive: true, maintainAspectRatio: false, parsing: false, normalized: true,
-      interaction: { mode: 'nearest', axis: 'x', intersect: false },
-      scales: { x: echelleX(), y: { grid: { color: grille }, title: { display: true, text: titreY } } },
-      plugins: { legend: { position: 'top', align: 'end', labels: { boxWidth: 12, boxHeight: 2 } }, tooltip: { enabled: false } },
-      onHover: survol, onClick: survol
-    });
-    etat.grapheAvance = new Chart($('#graphe-avance'), {
-      type: 'line',
-      data: {
-        datasets: [
-          {
-            label: 'Avance compensée de l\'altitude', data: g.map(p => ({ x: p.tau, y: p.comp / 60 })),
-            borderWidth: 2, pointRadius: 0, borderColor: cA,
-            segment: { borderColor: (c) => ((c.p0.parsed.y + c.p1.parsed.y) / 2 >= 0 ? cA : cB) },
-            fill: { target: 'origin', above: alpha(cA, 0.18), below: alpha(cB, 0.18) }
-          },
-          {
-            label: 'Sans compensation', data: g.map(p => ({ x: p.tau, y: p.brut / 60 })),
-            borderWidth: 1, pointRadius: 0, borderDash: [4, 4], borderColor: css('--texte-2')
-          }
-        ]
-      },
-      options: options(`minutes · haut : A devant · bas : B devant`),
-      plugins: [pluginCurseurComp]
-    });
-    etat.grapheAltComp = new Chart($('#graphe-alt-comp'), {
-      type: 'line',
-      data: {
-        datasets: [
-          { label: 'A · ' + nomA(), data: g.map(p => ({ x: p.tau, y: p.hA })), borderWidth: 1.5, pointRadius: 0, borderColor: cA },
-          { label: 'B · ' + nomB(), data: g.map(p => ({ x: p.tau, y: p.hB })), borderWidth: 1.5, pointRadius: 0, borderColor: cB }
-        ]
-      },
-      options: options('altitude (m)'),
-      plugins: [pluginCurseurComp]
-    });
-  }
-
-  function dessinerCarteComparaison() {
-    const a = etat.analyse, b = etat.vol2.analyse;
-    const cA = css('--pilote-a'), cB = css('--pilote-b');
-    etat.couches.vol2.clearLayers();
-    etat.couches.planeurs.clearLayers();
-    etat.couches.selection.clearLayers();
-    etat.couches.temps.clearLayers();
-    const trace = (an) => {
-      const c = [];
-      for (let i = an.deco; i <= an.atterro; i++) c.push([an.points[i].lat, an.points[i].lon]);
-      return c;
-    };
-    L.polyline(trace(a), { color: cA, weight: 3, opacity: 0.9, interactive: false }).addTo(etat.couches.trace);
-    L.polyline(trace(b), { color: cB, weight: 3, opacity: 0.9, interactive: false }).addTo(etat.couches.vol2);
-    const planeur = (an, c, cl) => L.circleMarker([an.points[an.deco].lat, an.points[an.deco].lon], {
-      radius: 7, color: '#fff', weight: 2.5, fillColor: c, fillOpacity: 1
-    }).bindTooltip(cl.toUpperCase(), { permanent: true, direction: 'top', offset: [0, -8], className: 'etiquette-planeur ' + cl })
-      .addTo(etat.couches.planeurs);
-    etat.planeurA = planeur(a, cA, 'a');
-    etat.planeurB = planeur(b, cB, 'b');
-    $('#legende').innerHTML = `<span><i style="background:${cA}"></i>A · ${echapper(nomA())}</span>` +
-      `<span><i style="background:${cB}"></i>B · ${echapper(nomB())}</span>`;
-  }
-
-  function allerA(idx) {
-    if (!etat.comp) return;
-    etat.compIdx = idx;
-    $('#comp-temps').value = String(idx);
-    majCurseurComparaison();
-  }
-
-  function majCurseurComparaison() {
-    const r = etat.comp;
-    if (!r) return;
-    const p = r.grille[etat.compIdx];
-    const a = etat.analyse, b = etat.vol2.analyse;
-    $('#comp-lecture-txt').textContent = r.course
-      ? `Temps de course ${fmtDureeTab(Math.max(0, p.tau))}`
-      : `Heure ${fmtHeure(p.tau, true)}`;
-
-    const egal = Math.abs(p.comp) < 5;
-    const cote = p.comp >= 0 ? 'a' : 'b';
-    const brut = Math.abs(p.brut) < 5 ? 'à égalité' : `${nomDe(p.brut >= 0 ? 'a' : 'b')} +${fmtDuree(Math.abs(p.brut))}`;
-    const etatPilote = (cl, an, f, L, h, i, pr) => {
-      const phase = f <= 0 ? 'pas encore parti' : f >= 1 && pr.termine ? 'arrivé' : NOM_PHASE[an.phaseDe[i]];
-      return `<div class="comp-pil"><div class="t-lab"><span class="badge ${cl}" style="width:18px;height:18px;font-size:10px">${cl.toUpperCase()}</span>${echapper(nomDe(cl))}</div>
-        <div class="t-val">${nf(f * 100)} % · ${nf(f * L / 1000, 1)} km</div>
-        <div class="t-sous">${nf(h)} m · ${phase}${f > 0 && f < 1 ? ` · Vz ${signe(an.vz[i], 1)} m/s · ${nf(an.vit[i] * 3.6)} km/h` : ''}</div></div>`;
-    };
-    $('#comp-etat').innerHTML =
-      `<div class="comp-avance ${egal ? '' : cote}"><div class="t-sous">Avance compensée de l'altitude</div>
-        <div class="gros">${egal ? 'À égalité' : `${echapper(nomDe(cote))} +${fmtDuree(Math.abs(p.comp))}`}</div>
-        <div class="t-sous">Sans compensation : ${echapper(brut)}</div></div>` +
-      etatPilote('a', a, p.fA, r.prA.L, p.hA, p.iA, r.prA) +
-      etatPilote('b', b, p.fB, r.prB.L, p.hB, p.iB, r.prB);
-
-    if (etat.planeurA) {
-      etat.planeurA.setLatLng([a.points[p.iA].lat, a.points[p.iA].lon]).setTooltipContent(`A · ${nf(p.hA)} m`);
-      etat.planeurB.setLatLng([b.points[p.iB].lat, b.points[p.iB].lon]).setTooltipContent(`B · ${nf(p.hB)} m`);
+  function afficherBarogramme() {
+    const A = volA(), B = volB();
+    if (etat.baro) etat.baro.destroy();
+    Chart.defaults.color = css('--texte-2');
+    Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;
+    const sA = serieAlt(A, 0);
+    const datasets = [{
+      label: nomVol(A), data: sA.data, borderWidth: 1.6, pointRadius: 0, borderColor: css('--transition'),
+      segment: { borderColor: (c) => couleurPhase(A.analyse.phaseDe[sA.idx[c.p0DataIndex]]) }
+    }];
+    if (B) {
+      const sB = serieAlt(B, etat.decalB);
+      datasets.push({ label: nomVol(B), data: sB.data, borderWidth: 1.6, pointRadius: 0, borderColor: css('--pilote-b') });
     }
-    if (!etat.redessinComp) {
-      etat.redessinComp = true;
+    const tMin = Math.min(...datasets.map(d => d.data[0].x)), tMax = Math.max(...datasets.map(d => d.data[d.data.length - 1].x));
+    etat.baro = new Chart($('#barogramme'), {
+      type: 'line',
+      data: { datasets },
+      options: {
+        animation: false, responsive: true, maintainAspectRatio: false, parsing: false, normalized: true,
+        events: [],
+        layout: { padding: { top: 4 } },
+        scales: {
+          x: { type: 'linear', min: tMin, max: tMax, grid: { color: css('--grille') }, ticks: { callback: (v) => fmtHeure(v), maxTicksLimit: 9, maxRotation: 0, font: { size: 11 } } },
+          y: { grid: { color: css('--grille') }, ticks: { maxTicksLimit: 4, font: { size: 11 } } }
+        },
+        plugins: { legend: { display: false }, tooltip: { enabled: false } }
+      },
+      plugins: [pluginFrise]
+    });
+  }
+
+  // Glisser sur le barogramme pour déplacer le curseur
+  (function () {
+    const zone = $('.baro');
+    let actif = false;
+    const placer = (e) => {
+      if (!etat.baro) return;
+      const r = zone.getBoundingClientRect();
+      const x = etat.baro.scales.x.getValueForPixel(e.clientX - r.left);
+      allerA(x);
+    };
+    zone.addEventListener('pointerdown', (e) => { actif = true; arreterLecture(); zone.setPointerCapture(e.pointerId); placer(e); });
+    zone.addEventListener('pointermove', (e) => { if (actif) placer(e); });
+    zone.addEventListener('pointerup', () => { actif = false; });
+    zone.addEventListener('pointercancel', () => { actif = false; });
+  })();
+
+  function allerA(t) {
+    etat.t = Math.max(etat.tMin, Math.min(etat.tMax, t));
+    majCurseur();
+  }
+
+  // Mise à jour de tout ce qui dépend du curseur
+  function majCurseur() {
+    const A = volA(), B = volB();
+    if (!A || etat.t == null) return;
+    const a = A.analyse;
+    const iA = indice(a.t, etat.t);
+    let iB = null;
+    if (B) iB = indice(B.analyse.t, etat.t - etat.decalB);
+    if (etat.planeurs.a) etat.planeurs.a.setLatLng([a.points[iA].lat, a.points[iA].lon]);
+    if (etat.planeurs.b && iB != null) etat.planeurs.b.setLatLng([B.analyse.points[iB].lat, B.analyse.points[iB].lon]);
+    if (etat.suivre && etat.carte) {
+      const p = [a.points[iA].lat, a.points[iA].lon];
+      if (!etat.carte.getBounds().pad(-0.25).contains(p)) etat.carte.panTo(p, { animate: false });
+    }
+
+    // Valeurs en direct dans la frise
+    const ligne = (v, i, cl) => {
+      const an = v.analyse;
+      const enAir = i > an.deco && i < an.atterro;
+      return `<div class="direct-ligne"><span class="point ${cl}"></span><span class="nom">${echapper(nomVol(v))}</span>
+        <span>${nf(an.alt[i])} m</span><span>${enAir ? nf(an.vit[i] * 3.6) + ' km/h' : NOM_PHASE.S}</span></div>`;
+    };
+    let html = ligne(A, iA, 'a') + (B ? ligne(B, iB, 'b') : '');
+    const av = avanceCourante();
+    if (av) {
+      const cl = Math.abs(av.comp) < 5 ? '' : av.comp > 0 ? 'a' : 'b';
+      html += `<span class="pastille-avance ${cl}">${cl ? `${echapper(nomCourt(cl === 'a' ? A : B))} +${fmtDuree(av.comp)}` : 'À égalité'} · ${fmtDist(Math.abs(av.dist))}</span>`;
+    }
+    $('#direct').innerHTML = html;
+    majDuelDirect(av, iA, iB);
+
+    if (!etat.redessin) {
+      etat.redessin = true;
       requestAnimationFrame(() => {
-        etat.redessinComp = false;
-        if (etat.grapheAvance) etat.grapheAvance.draw();
-        if (etat.grapheAltComp) etat.grapheAltComp.draw();
+        etat.redessin = false;
+        if (etat.baro) etat.baro.draw();
+        if (etat.grapheParcours) etat.grapheParcours.draw();
       });
     }
   }
 
-  function basculerLecture() {
-    if (etat.compLecture) { arreterLecture(); return; }
+  // Avance au curseur : temps (compensé et sans altitude), distance sur le circuit, altitude
+  function avanceCourante() {
     const r = etat.comp;
-    if (!r) return;
-    const n = r.grille.length - 1;
-    if (etat.compIdx >= n) etat.compIdx = 0;
-    const pas = Math.max(1, Math.round(n / 900)); // environ 35 s pour tout le vol
-    $('#comp-lecture').textContent = '❚❚';
-    $('#comp-lecture').setAttribute('aria-label', 'Mettre en pause');
-    etat.compLecture = setInterval(() => {
-      if (!etat.comp || etat.compIdx >= n) { arreterLecture(); return; }
-      allerA(Math.min(n, etat.compIdx + pas));
-    }, 40);
+    if (!r) return null;
+    const tau = etat.t - r.SA.origine;
+    const x = IGC.avanceAu(r.SA, r.SB, tau, r.mc);
+    const L = (r.prA.L + r.prB.L) / 2;
+    return { comp: x.comp, brut: x.brut, dist: (x.eA.f - x.eB.f) * L, alt: x.eA.h - x.eB.h, fA: x.eA.f, fB: x.eB.f };
   }
 
+  // ----- Lecture ------------------------------------------------------
+  function boucle(ts) {
+    if (!etat.lecture) return;
+    const dt = etat.dernierFrame ? (ts - etat.dernierFrame) / 1000 : 0;
+    etat.dernierFrame = ts;
+    allerA(etat.t + dt * etat.vitesse);
+    if (etat.t >= etat.tMax) { arreterLecture(); return; }
+    requestAnimationFrame(boucle);
+  }
+  function lancerLecture() {
+    if (etat.t >= etat.tMax - 1) etat.t = etat.tMin;
+    etat.lecture = true;
+    etat.dernierFrame = 0;
+    $('#lecture').textContent = '❚❚';
+    $('#lecture').setAttribute('aria-label', 'Mettre en pause');
+    requestAnimationFrame(boucle);
+  }
   function arreterLecture() {
-    if (etat.compLecture) clearInterval(etat.compLecture);
-    etat.compLecture = null;
-    const b = $('#comp-lecture');
-    if (b) { b.textContent = '▶'; b.setAttribute('aria-label', 'Lire le vol'); }
+    etat.lecture = false;
+    $('#lecture').textContent = '▶';
+    $('#lecture').setAttribute('aria-label', 'Lire le vol');
   }
 
-  function afficherBilan() {
+  // ===================================================================
+  // Panneau latéral : circuit + duel
+  // ===================================================================
+  const FACTEURS = {
+    vz: { nom: 'Spirale', grace: 'à la spirale', sur: 'sur la spirale', detail: (m) => `Vz ${signe(m.vz, 2)} m/s` },
+    vg: { nom: 'Vitesse transition', grace: 'à la vitesse en transition', sur: 'sur la vitesse en transition', detail: (m) => `${nf(m.vg * 3.6)} km/h` },
+    ld: { nom: 'Finesse transition', grace: 'à la finesse en transition', sur: 'sur la finesse en transition', detail: (m) => `finesse ${nf(m.ld, 1)}` },
+    k: { nom: 'Cheminement', grace: 'au cheminement', sur: 'sur le cheminement', detail: (m) => `${nf(m.k * 100)} km parcourus / 100 km` },
+    e2: { nom: 'Alti départ / arrivée', grace: "à l'altitude de départ et d'arrivée", sur: "sur l'altitude de départ et d'arrivée", detail: (m) => `${nf(m.st.hDebut)} → ${nf(m.st.hFin)} m` }
+  };
+  const lettre = (x) => (Math.abs(x) < 3 ? null : x > 0 ? 'a' : 'b');
+
+  function afficherLateral() {
+    const A = volA(), B = volB();
+    let html = blocCircuit(A, B);
+    html += B ? blocDuel(A, B) : `<section class="bloc"><div class="bloc-titre"><h2>Duel</h2></div>
+      <div class="invitation">Ajoutez le vol d'un autre pilote sur la même épreuve avec « Ajouter des vols… », puis choisissez-le dans le menu Duel.
+      <button class="btn" data-action="demo-b">Comparer avec un vol de démo</button></div></section>`;
+    html += `<div class="pied">${echapper(etat.texteVersion || '')}</div>`;
+    $('#lateral').innerHTML = html;
+    if (etat.grapheParcours) { etat.grapheParcours.destroy(); etat.grapheParcours = null; }
+    if (etat.comp) afficherParcours();
+  }
+
+  function blocCircuit(A, B) {
+    const Z = zones();
+    if (Z.length < 2) {
+      return `<section class="bloc"><div class="bloc-titre"><h2>Circuit</h2></div>
+        <p class="discret">Aucun circuit déclaré dans ${B ? 'ces fichiers' : 'ce fichier'}.</p></section>`;
+    }
+    const r = A.circ;
+    let res = '';
+    if (!B && r) {
+      res = r.termine
+        ? `<div class="resultat ok"><b>Terminé</b> en ${fmtChrono(r.duree)} · ${nf(r.vitesse * 3.6, 1)} km/h</div>`
+        : `<div class="resultat ko"><b>Non terminé</b> ${echapper(r.raison || '')}</div>`;
+    }
+    return `<section class="bloc">
+      <div class="bloc-titre"><h2>Circuit</h2>
+        <div class="segment" role="group" aria-label="Type de circuit">
+          <button data-action="type" data-val="CT" class="${etat.typeCircuit === 'CT' ? 'actif' : ''}">CT</button>
+          <button data-action="type" data-val="AAT" class="${etat.typeCircuit === 'AAT' ? 'actif' : ''}">AAT</button>
+        </div></div>
+      <p class="trajet">${Z.map(z => echapper(z.nom)).join(' → ')}</p>
+      <p class="discret petit">${nf((r ? r.distanceNominale : 0) / 1000, 1)} km entre les centres${etat.tempsMini ? ` · temps mini ${fmtDuree(etat.tempsMini)}` : ''}</p>
+      ${res}
+    </section>`;
+  }
+
+  function resumePilote(v) {
+    const r = v.circ;
+    if (!r || !r.nbAtteints) return { chrono: '—', sous: 'pas de départ' };
+    if (r.termine) return { chrono: fmtChrono(r.duree), sous: `${nf(r.vitesse * 3.6, 1)} km/h` };
+    const pr = etat.comp ? (v === volA() ? etat.comp.prA : etat.comp.prB) : null;
+    return { chrono: pr ? `${nf(pr.env[pr.iFin] * 100)} %` : '—', sous: 'non terminé' };
+  }
+
+  function blocDuel(A, B) {
+    const rA = A.circ, rB = B.circ;
+    // Vainqueur
+    let gagnant = null, ecart = '';
+    if (rA && rB && rA.termine && rB.termine) {
+      if (etat.typeCircuit === 'AAT') {
+        gagnant = rA.vitesse >= rB.vitesse ? 'a' : 'b';
+        ecart = `${nf(Math.abs(rA.vitesse - rB.vitesse) * 3.6, 1)} km/h`;
+      } else {
+        gagnant = rA.duree <= rB.duree ? 'a' : 'b';
+        ecart = fmtDuree(rA.duree - rB.duree);
+      }
+    } else if (rA && rA.termine) gagnant = 'a';
+    else if (rB && rB.termine) gagnant = 'b';
+    const carte = (v, cl) => {
+      const s = resumePilote(v), e = v.analyse.entete;
+      return `<div class="duel-pilote ${cl}${gagnant === cl ? ' gagnant' : ''}">
+        ${gagnant === cl ? '<span class="vainqueur">Vainqueur</span>' : ''}
+        <div class="nom"><span class="point ${cl}"></span>${echapper(nomCourt(v))}</div>
+        <div class="chrono">${s.chrono}</div>
+        <div class="sous">${s.sous}</div>
+        <div class="sous">${echapper([e.planeur, e.concours].filter(Boolean).join(' · '))}</div></div>`;
+    };
+    let html = `<section class="bloc"><div class="bloc-titre"><h2>Duel</h2></div>
+      <div class="duel-tete">${carte(A, 'a')}<div class="duel-ecart">${ecart ? `écart<b>${ecart}</b>` : 'vs'}</div>${carte(B, 'b')}</div>`;
+    if (rA && rB && rA.nbAtteints && rB.nbAtteints) {
+      html += `<p class="duel-info">${nf(rA.distanceNominale / 1000, 1)} km · circuit ${etat.typeCircuit} · départs ${fmtHeure(rA.tDepart, true)} (${echapper(nomCourt(A))}) et ${fmtHeure(rB.tDepart, true)} (${echapper(nomCourt(B))}), heure de passage de la ligne</p>`;
+    }
+    html += `<div class="segment" role="group" aria-label="Temps de comparaison">
+        <button data-action="alignement" data-val="course" class="${etat.alignement === 'course' ? 'actif' : ''}">Départs alignés</button>
+        <button data-action="alignement" data-val="reel" class="${etat.alignement === 'reel' ? 'actif' : ''}">Heure réelle</button></div>`;
+    if (etat.compErreur) html += `<p class="discret petit">${echapper(etat.compErreur)}</p>`;
+    if (etat.comp) {
+      html += `<div class="direct-carte">
+        <div class="direct-tete"><span>En direct · à hauteur égale</span><span id="dd-heure"></span></div>
+        <div class="direct-gros" id="dd-avance"></div>
+        <div class="tir"><div class="tir-barre"><span class="tir-curseur" id="dd-tir"></span></div>
+          <div class="tir-noms"><span class="b">◀ ${echapper(nomCourt(B))}</span><span class="a">${echapper(nomCourt(A))} ▶</span></div></div>
+        <div class="deltas">
+          <div class="delta"><span>Temps</span><div id="dd-temps"></div></div>
+          <div class="delta"><span>Distance</span><div id="dd-dist"></div></div>
+          <div class="delta"><span>Altitude</span><div id="dd-alt"></div></div>
+        </div>
+        <div class="direct-brut" id="dd-brut"></div>
+      </div>`;
+      html += blocParcours();
+      html += blocBilan(A, B);
+      html += blocBranches(A, B);
+    }
+    return html + '</section>';
+  }
+
+  function majDuelDirect(av, iA, iB) {
+    const el = $('#dd-avance');
+    if (!el || !av) return;
+    const A = volA(), B = volB();
+    const cl = lettre(av.comp);
+    const nom = (c) => echapper(nomCourt(c === 'a' ? A : B));
+    $('#dd-heure').textContent = fmtHeure(etat.t, true);
+    el.className = 'direct-gros ' + (cl || '');
+    el.innerHTML = cl ? `${nom(cl)} +${fmtDuree(av.comp)}` : 'À égalité';
+    const tir = $('#dd-tir');
+    tir.className = 'tir-curseur ' + (cl || '');
+    tir.style.left = `${50 + Math.max(-1, Math.min(1, av.comp / 600)) * 46}%`;
+    // Chaque écart : la valeur, et en dessous le pilote qui a l'avantage
+    const cel = (id, val, c, sous) => {
+      const e = $(id);
+      e.innerHTML = c ? `<b class="${c}">+${val}</b><small class="${c}">${nom(c)} ${sous}</small>` : '<b>égalité</b><small>&nbsp;</small>';
+    };
+    cel('#dd-temps', fmtDuree(av.comp), cl, 'devant');
+    const cd = Math.abs(av.dist) < 50 ? null : av.dist > 0 ? 'a' : 'b';
+    cel('#dd-dist', fmtDist(Math.abs(av.dist)), cd, 'plus loin');
+    const ch = Math.abs(av.alt) < 5 ? null : av.alt > 0 ? 'a' : 'b';
+    cel('#dd-alt', `${nf(Math.abs(av.alt))} m`, ch, 'plus haut');
+    const cb = lettre(av.brut);
+    $('#dd-brut').innerHTML = `Sans l'altitude : ${cb ? `${nom(cb)} +${fmtDuree(av.brut)}` : 'à égalité'} au même point du circuit` +
+      ` · ${nf(av.fA * 100)} % du circuit pour ${nom('a')}, ${nf(av.fB * 100)} % pour ${nom('b')}`;
+  }
+
+  // ----- Au fil du parcours -----------------------------------------
+  function blocParcours() {
     const r = etat.comp, B = r.bilan;
-    if (etat.grapheDecomp) { etat.grapheDecomp.destroy(); etat.grapheDecomp = null; }
-    if (!B) {
-      $('#comp-resume').textContent = 'Pas assez de circuit fait en commun pour établir le bilan.';
-      $('#comp-explications').innerHTML = '';
-      return;
-    }
-    const cles = Object.keys(B.parts).sort((x, y) => Math.abs(B.parts[y]) - Math.abs(B.parts[x]));
+    const vRef = B ? (B.vitesseA + B.vitesseB) / 2 : (r.prA.L / Math.max(1, r.SA.tFin - r.SA.tDep));
+    const sec100 = 100 / r.mc;
+    return `<div class="bloc-titre"><h3 class="petit">Au fil du parcours</h3>
+        <div class="segment" role="group" aria-label="Axe horizontal">
+          <button data-action="unite" data-val="km" class="${etat.uniteParcours === 'km' ? 'actif' : ''}">km</button>
+          <button data-action="unite" data-val="temps" class="${etat.uniteParcours === 'temps' ? 'actif' : ''}">temps</button></div></div>
+      <div class="parcours"><canvas id="graphe-parcours"></canvas></div>
+      <p class="note">Aire colorée : avance <b>à hauteur égale</b>, la vraie avance. Pointillés : sans tenir compte de l'altitude.
+        Ici, 100 m de hauteur valent <b>${nf(sec100)} s</b>, le temps de les reprendre à
+        <input type="number" id="mc" step="0.1" min="0.2" value="${r.mc.toFixed(1)}" aria-label="Taux de montée de référence"> m/s
+        (la montée moyenne des deux pilotes), soit <b>${nf(sec100 * vRef / 1000, 1)} km</b> à ${nf(vRef * 3.6)} km/h.</p>`;
+  }
+
+  function afficherParcours() {
+    const r = etat.comp, g = r.grille;
     const cA = css('--pilote-a'), cB = css('--pilote-b');
-
-    // Phrase de synthèse
-    const partiel = B.fc < 0.999;
-    let txt = partiel ? `Jusqu'à ${nf(B.fc * 100)} % du circuit (dernier point atteint par les deux)` : 'Sur le circuit complet';
-    txt += B.memeDistance
-      ? `, A met ${fmtDuree(B.mA.duree)} et B ${fmtDuree(B.mB.duree)}`
-      : `, à distance égale (${nf(B.Dref / 1000, 1)} km) : ${nf(B.vitesseA * 3.6, 1)} km/h pour A, ${nf(B.vitesseB * 3.6, 1)} km/h pour B`;
-    if (Math.abs(B.total) < 5) {
-      txt += '. <b>Égalité ou presque.</b>';
-    } else {
-      const gagnant = B.total > 0 ? 'a' : 'b';
-      const s = gagnant === 'a' ? 1 : -1;
-      const pour = cles.filter(c => s * B.parts[c] > 3).sort((x, y) => s * (B.parts[y] - B.parts[x]));
-      const contre = cles.filter(c => s * B.parts[c] < -3).sort((x, y) => s * (B.parts[x] - B.parts[y]));
-      txt += `. <b>${echapper(nomDe(gagnant))} gagne ${fmtDuree(Math.abs(B.total))}</b>`;
-      if (pour.length) txt += `, surtout grâce ${FACTEURS[pour[0]].grace} (${fmtDuree(Math.abs(B.parts[pour[0]]))})`;
-      if (contre.length) txt += `, mais perd ${fmtDuree(Math.abs(B.parts[contre[0]]))} ${FACTEURS[contre[0]].sur}`;
-      txt += '.';
+    const km = etat.uniteParcours === 'km';
+    const LA = r.prA.L;
+    // Abscisse : heure du vol A, ou km faits par A
+    const pts = [], ptsBrut = [];
+    let fPrec = -1;
+    for (const p of g) {
+      const x = km ? p.fA * LA / 1000 : p.tau + r.SA.origine;
+      if (km) { if (p.fA <= 0 || p.fA <= fPrec) continue; fPrec = p.fA; }
+      pts.push({ x, y: p.comp / 60 });
+      ptsBrut.push({ x, y: p.brut / 60 });
     }
-    $('#comp-resume').innerHTML = txt;
-
-    $('#comp-explications').innerHTML = cles.map(c => {
-      const v = B.parts[c];
-      const cl = Math.abs(v) < 3 ? 'nul' : v > 0 ? 'a' : 'b';
-      return `<li><span class="val ${cl}">${avantage(v)}</span>
-        <span><b>${FACTEURS[c].nom}</b><br><span class="discret">A : ${FACTEURS[c].detail(B.mA)}<br>B : ${FACTEURS[c].detail(B.mB)}</span></span></li>`;
-    }).join('');
-
-    etat.grapheDecomp = new Chart($('#graphe-decomp'), {
-      type: 'bar',
+    if (pts.length < 2) return;
+    // Repères des points du circuit
+    const chemin = r.prA.chemin, n = chemin.length;
+    const reperes = [];
+    let cumul = 0;
+    for (let k = 0; k < n; k++) {
+      if (k > 0) cumul += IGC.distance(chemin[k - 1], chemin[k]);
+      const x = km ? cumul / 1000 : (isFinite(chemin[k].i) ? volA().analyse.t[chemin[k].i] : null);
+      if (x != null) reperes.push({ x, lab: nomPoint(k, n) });
+    }
+    const A = volA(), B = volB();
+    const pluginParcours = {
+      id: 'parcours',
+      afterDatasetsDraw(chart) {
+        const { ctx, chartArea: z, scales: { x, y } } = chart;
+        ctx.save();
+        ctx.font = '600 10px ' + Chart.defaults.font.family;
+        ctx.fillStyle = css('--texte-2');
+        ctx.strokeStyle = css('--grille');
+        reperes.forEach(rp => {
+          const px = x.getPixelForValue(rp.x);
+          if (px < z.left - 1 || px > z.right + 1) return;
+          ctx.beginPath(); ctx.moveTo(px, z.top); ctx.lineTo(px, z.bottom); ctx.stroke();
+          ctx.fillText(rp.lab, px + 2, z.bottom - 3);
+        });
+        if (y.min < 0 && y.max > 0) {
+          const py = y.getPixelForValue(0);
+          ctx.strokeStyle = css('--texte-2');
+          ctx.beginPath(); ctx.moveTo(z.left, py); ctx.lineTo(z.right, py); ctx.stroke();
+        }
+        ctx.fillStyle = cA; ctx.fillText(`${nomCourt(A)} devant`, z.left + 4, z.top + 10);
+        ctx.fillStyle = cB; ctx.fillText(`${nomCourt(B)} devant`, z.left + 4, z.bottom - 14);
+        // Curseur
+        const av = avanceCourante();
+        if (av) {
+          const cx = km ? av.fA * LA / 1000 : etat.t;
+          const px = x.getPixelForValue(cx);
+          if (px >= z.left && px <= z.right) {
+            ctx.strokeStyle = css('--texte');
+            ctx.lineWidth = 1.5;
+            ctx.beginPath(); ctx.moveTo(px, z.top); ctx.lineTo(px, z.bottom); ctx.stroke();
+          }
+        }
+        ctx.restore();
+      }
+    };
+    const max = Math.max(1, ...pts.map(p => Math.abs(p.y)), ...ptsBrut.map(p => Math.abs(p.y)));
+    etat.grapheParcours = new Chart($('#graphe-parcours'), {
+      type: 'line',
       data: {
-        labels: cles.map(c => FACTEURS[c].nom),
-        datasets: [{
-          data: cles.map(c => B.parts[c] / 60),
-          backgroundColor: cles.map(c => (B.parts[c] >= 0 ? cA : cB)),
-          borderRadius: 4, maxBarThickness: 26
-        }]
+        datasets: [
+          {
+            data: pts, borderWidth: 2, pointRadius: 0, borderColor: cA,
+            segment: { borderColor: (c) => ((c.p0.parsed.y + c.p1.parsed.y) / 2 >= 0 ? cA : cB) },
+            fill: { target: 'origin', above: alpha(cA, 0.2), below: alpha(cB, 0.2) }
+          },
+          { data: ptsBrut, borderWidth: 1, pointRadius: 0, borderDash: [4, 4], borderColor: css('--texte-2') }
+        ]
       },
       options: {
-        indexAxis: 'y', animation: false, responsive: true, maintainAspectRatio: false,
-        scales: {
-          x: { grid: { color: css('--grille') }, title: { display: true, text: 'minutes gagnées · droite : A · gauche : B' } },
-          y: { grid: { display: false } }
+        animation: false, responsive: true, maintainAspectRatio: false, parsing: false, normalized: true,
+        events: ['click'],
+        onClick: (ev, _e, chart) => {
+          const xv = chart.scales.x.getValueForPixel(ev.x);
+          if (!km) { arreterLecture(); allerA(xv); return; }
+          const f = xv * 1000 / LA, p = g.find(q => q.fA >= f);
+          if (p) { arreterLecture(); allerA(p.tau + r.SA.origine); }
         },
-        plugins: {
-          legend: { display: false },
-          tooltip: { callbacks: { label: (c) => avantage(B.parts[cles[c.dataIndex]]) } }
-        }
-      }
+        scales: {
+          x: { type: 'linear', min: pts[0].x, max: pts[pts.length - 1].x, grid: { display: false },
+            ticks: { maxTicksLimit: 6, maxRotation: 0, font: { size: 10 }, callback: (v) => (km ? `${nf(v)} km` : fmtHeure(v)) } },
+          y: { min: -Math.ceil(max), max: Math.ceil(max), grid: { color: css('--grille') },
+            ticks: { maxTicksLimit: 5, font: { size: 10 }, callback: (v) => `${v > 0 ? '+' : ''}${v} min` } }
+        },
+        plugins: { legend: { display: false }, tooltip: { enabled: false } }
+      },
+      plugins: [pluginParcours]
     });
   }
 
-  function afficherTablesComparaison() {
-    const r = etat.comp, B = r.bilan;
-    const a = etat.analyse, b = etat.vol2.analyse;
-    const Z = zonesEffectives();
-    // Tableau pilote contre pilote : la meilleure valeur en gras
-    const ligne = (lab, vA, vB, fmt, mieux) => {
-      let mA = '', mB = '';
-      if (mieux && vA != null && vB != null && isFinite(vA) && isFinite(vB) && vA !== vB) {
-        const aMieux = mieux === 'haut' ? vA > vB : vA < vB;
-        mA = aMieux ? ' mieux' : '';
-        mB = aMieux ? '' : ' mieux';
-      }
-      return `<tr><td>${lab}</td><td class="a"><span class="${mA}">${fmt(vA)}</span></td><td class="b"><span class="${mB}">${fmt(vB)}</span></td></tr>`;
-    };
-    const finStr = (pr, an) => pr.termine ? fmtHeure(an.t[pr.iFin]) : `non terminé (${nf(pr.env[pr.iFin] * 100)} %)`;
-    let lignes = [
-      `<tr><td>Départ</td><td class="a">${fmtHeure(a.t[r.prA.iDep])} · ${nf(a.alt[r.prA.iDep])} m</td><td class="b">${fmtHeure(b.t[r.prB.iDep])} · ${nf(b.alt[r.prB.iDep])} m</td></tr>`,
-      `<tr><td>Arrivée</td><td class="a">${finStr(r.prA, a)}</td><td class="b">${finStr(r.prB, b)}</td></tr>`
-    ];
-    if (B) {
-      const pct = B.fc < 0.999 ? ` (jusqu'à ${nf(B.fc * 100)} %)` : '';
-      lignes = lignes.concat([
-        ligne('Temps' + pct, B.mA.duree, B.mB.duree, fmtDuree, B.memeDistance ? 'bas' : null),
-        ligne('Distance' + pct, B.mA.D, B.mB.D, v => `${nf(v / 1000, 1)} km`, null),
-        ligne('Vitesse', B.vitesseA * 3.6, B.vitesseB * 3.6, v => `${nf(v, 1)} km/h`, 'haut'),
-        ligne('Vz moyen en spirale', B.mA.vz, B.mB.vz, v => `${signe(v, 2)} m/s`, 'haut'),
-        ligne('Temps en spirale', B.mA.st.tempsT / B.mA.duree * 100, B.mB.st.tempsT / B.mB.duree * 100, v => `${nf(v)} %`, 'bas'),
-        ligne('Thermiques exploités', B.mA.nbTh, B.mB.nbTh, v => nf(v), null),
-        ligne('Vitesse en transition', B.mA.vg * 3.6, B.mB.vg * 3.6, v => `${nf(v)} km/h`, 'haut'),
-        ligne('Finesse en transition', B.mA.ld, B.mB.ld, v => fmtFinesse(v), 'haut'),
-        ligne('Cheminement', B.mA.k * 100, B.mB.k * 100, v => `${nf(v)} km / 100 km`, 'bas'),
-        ligne('Altitude en fin de portion', B.mA.st.hFin, B.mB.st.hFin, v => `${nf(v)} m`, null)
-      ]);
+  // ----- Qui gagne grâce à quoi ------------------------------------
+  function blocBilan(A, B) {
+    const bl = etat.comp.bilan;
+    if (!bl) return '';
+    const cles = Object.keys(bl.parts).sort((x, y) => Math.abs(bl.parts[y]) - Math.abs(bl.parts[x]));
+    const maxV = Math.max(30, ...cles.map(c => Math.abs(bl.parts[c])));
+    const nom = (c) => echapper(nomCourt(c === 'a' ? A : B));
+    let txt;
+    const portion = bl.fc < 0.999 ? `Jusqu'à ${nf(bl.fc * 100)} % du circuit` : 'Sur tout le circuit';
+    if (Math.abs(bl.total) < 5) txt = `${portion} : égalité ou presque.`;
+    else {
+      const g = bl.total > 0 ? 'a' : 'b', s = g === 'a' ? 1 : -1;
+      const pour = cles.filter(c => s * bl.parts[c] > 3).sort((x, y) => s * (bl.parts[y] - bl.parts[x]));
+      const contre = cles.filter(c => s * bl.parts[c] < -3).sort((x, y) => s * (bl.parts[x] - bl.parts[y]));
+      txt = `${portion}${bl.memeDistance ? '' : ' (à distance égale)'}, <b>${nom(g)} gagne ${fmtDuree(bl.total)}</b>`;
+      if (pour.length) txt += `, surtout grâce ${FACTEURS[pour[0]].grace} (${fmtDuree(bl.parts[pour[0]])})`;
+      if (contre.length) txt += `, mais perd ${fmtDuree(bl.parts[contre[0]])} ${FACTEURS[contre[0]].sur}`;
+      txt += '.';
     }
-    $('#table-comp').innerHTML =
-      `<thead><tr><th></th><th class="a">A · ${echapper(nomA())}</th><th class="b">B · ${echapper(nomB())}</th></tr></thead><tbody>${lignes.join('')}</tbody>`;
-
-    $('#table-comp-branches').innerHTML = r.branches.length
-      ? `<thead><tr><th>Branche</th><th>Temps A</th><th>Temps B</th><th>Vitesse A</th><th>Vitesse B</th><th>Vz A</th><th>Vz B</th><th>Plus rapide</th><th>Avance au point</th></tr></thead><tbody>` +
-        r.branches.map(x => `<tr>
-          <td>${echapper(Z[x.k - 1] ? Z[x.k - 1].nom : '')} → ${echapper(Z[x.k] ? Z[x.k].nom : '')}</td>
-          <td>${fmtDureeTab(x.durA)}</td><td>${fmtDureeTab(x.durB)}</td>
-          <td>${nf(x.vA * 3.6, 1)} km/h</td><td>${nf(x.vB * 3.6, 1)} km/h</td>
-          <td>${signe(x.vzA, 1)}</td><td>${signe(x.vzB, 1)}</td>
-          <td class="fort">${avantage(x.ecart)}</td><td>${avantage(x.avanceAuPoint)}</td></tr>`).join('') + '</tbody>'
-      : '<tbody><tr><td>Aucune branche faite par les deux pilotes.</td></tr></tbody>';
+    const lignes = cles.map(c => {
+      const v = bl.parts[c], l = lettre(v), w = Math.abs(v) / maxV * 50;
+      return `<div class="facteur" title="${echapper(nomCourt(A))} : ${echapper(FACTEURS[c].detail(bl.mA))} · ${echapper(nomCourt(B))} : ${echapper(FACTEURS[c].detail(bl.mB))}">
+        <span class="f-nom">${FACTEURS[c].nom}</span>
+        <span class="f-barre">${l ? `<i class="${l}" style="width:${w}%"></i>` : ''}</span>
+        <span class="f-val ${l || 'nul'}">${l ? `${nom(l)} +${fmtDuree(v)}` : '≈ 0'}</span></div>
+        <div class="petit discret" style="margin:-4px 0 2px 120px">${echapper(FACTEURS[c].detail(bl.mA))} · ${echapper(FACTEURS[c].detail(bl.mB))}</div>`;
+    }).join('');
+    return `<h3 class="petit">Qui gagne grâce à quoi</h3><p class="synthese">${txt}</p><div class="facteurs">${lignes}</div>`;
   }
 
-  function selectionnerBranche(k) {
-    const a = etat.analyse, b = etat.resCircuit.branches[k];
-    etat.selection = { type: 'B', k, s: b.s, e: b.e };
-    const coords = [];
-    for (let i = b.s; i <= b.e; i++) coords.push([a.points[i].lat, a.points[i].lon]);
-    etat.couches.selection.clearLayers();
-    L.polyline(coords, { color: css('--selection'), weight: 9, opacity: 0.45, interactive: false }).addTo(etat.couches.selection);
-    etat.carte.fitBounds(L.latLngBounds(coords), { padding: [50, 50] });
-    document.querySelectorAll('tbody tr').forEach(tr => tr.classList.remove('actif'));
-    const ligne = document.querySelector(`#table-branches tr[data-branche="${k}"]`);
-    if (ligne) ligne.classList.add('actif');
-    redessiner();
+  function blocBranches(A, B) {
+    const r = etat.comp, Z = zones();
+    if (!r.branches.length) return '';
+    const nom = (c) => echapper(nomCourt(c === 'a' ? A : B));
+    const av = (x) => { const l = lettre(x); return l ? `<td class="${l}">${nom(l)} +${fmtDuree(x)}</td>` : '<td>=</td>'; };
+    return `<h3 class="petit">Branche par branche</h3><div class="table-wrap"><table>
+      <thead><tr><th>Branche</th><th>${nom('a')}</th><th>${nom('b')}</th><th>Plus rapide</th><th>Au point</th></tr></thead><tbody>` +
+      r.branches.map(x => `<tr><td title="${echapper(Z[x.k - 1].nom)} → ${echapper(Z[x.k].nom)}">B${x.k}</td>
+        <td>${fmtChrono(x.durA)}<br><span class="discret">${nf(x.vA * 3.6)} km/h</span></td>
+        <td>${fmtChrono(x.durB)}<br><span class="discret">${nf(x.vB * 3.6)} km/h</span></td>
+        ${av(x.ecart)}${av(x.avanceAuPoint)}</tr>`).join('') + '</tbody></table></div>';
   }
 
   // ===================================================================
   // Événements
   // ===================================================================
-  document.querySelectorAll('[data-vue]').forEach(b => b.addEventListener('click', () => {
-    if (etat.vue === b.dataset.vue) return;
-    etat.vue = b.dataset.vue;
-    renommer();
-    afficherVue();
+  const volsDemo = () => {
+    const a = ajouterVol(IGC.genererVolDemo(), 'vol-demo.igc');
+    const b = ajouterVol(IGC.genererVolDemo({
+      graine: 11, pilote: 'Pilote B', immat: 'F-CBBB', concours: 'BB',
+      decalage: 420, vTransition: 40, zigzag: 20, bonusVz: -0.3
+    }), 'vol-demo-b.igc');
+    return [a, b];
+  };
+  $('#btn-demo').addEventListener('click', () => apresAjout(volsDemo()));
+  $('#fichiers-accueil').addEventListener('change', (e) => { lireFichiers(e.target.files); e.target.value = ''; });
+  $('#fichiers').addEventListener('change', (e) => { lireFichiers(e.target.files); e.target.value = ''; });
+
+  $('#choix-a').addEventListener('change', (e) => {
+    etat.idA = +e.target.value;
+    if (etat.idB === etat.idA) etat.idB = null;
+    etat.mc = null; etat.typeForce = false; etat.etape = 0;
+    toutAfficher(true);
+  });
+  $('#choix-b').addEventListener('change', (e) => {
+    etat.idB = e.target.value ? +e.target.value : null;
+    etat.mc = null;
+    toutAfficher(false);
+  });
+
+  document.querySelectorAll('[data-filtre]').forEach(b => b.addEventListener('click', () => {
+    etat.filtre = b.dataset.filtre;
+    document.querySelectorAll('[data-filtre]').forEach(x => x.classList.toggle('actif', x === b));
+    if (volA()) dessinerCarte(false);
   }));
-  $('#btn-dessin').addEventListener('click', () => basculerDessin(!etat.dessin));
-  $('#btn-effacer').addEventListener('click', () => { etat.circuit = []; basculerDessin(true); majCircuit(); });
-  $('#btn-circuit-igc').addEventListener('click', () => { chargerCircuitIGC(); majCircuit(); cadrerCircuit(); });
-  $('#temps-mini').addEventListener('change', (e) => {
-    etat.tempsMini = Math.max(0, parseFloat(String(e.target.value).replace(',', '.')) || 0) * 3600;
-    majCircuit();
-  });
-  $('#liste-points').addEventListener('change', (e) => {
-    const ligne = e.target.closest('.pt-ligne');
-    if (!ligne) return;
-    const p = etat.circuit[+ligne.dataset.k];
-    if (e.target.classList.contains('pt-nom')) { p.nom = e.target.value.trim(); p.nomAuto = !p.nom; renommer(); }
-    if (e.target.classList.contains('pt-forme')) {
-      p.forme = e.target.value;
-      if (p.forme === 'secteur' && !(p.demiAngle < 180)) p.demiAngle = 45; // secteur FAI 90°
-    }
-    if (e.target.classList.contains('pt-r')) {
-      const v = parseFloat(String(e.target.value).replace(',', '.'));
-      p.rayon = v > 0 ? v * 1000 : null;
-    }
-    majCircuit();
-  });
-  $('#liste-points').addEventListener('click', (e) => {
-    if (!e.target.classList.contains('pt-suppr')) return;
-    etat.circuit.splice(+e.target.closest('.pt-ligne').dataset.k, 1);
-    renommer();
-    majCircuit();
-  });
-  document.querySelectorAll('[data-calque]').forEach(b => b.addEventListener('click', () => {
-    const c = b.dataset.calque;
-    etat.calques[c] = !etat.calques[c];
-    if (!etat.analyse) return;
-    if (c === 'thermiques') dessinerThermiques();
-    else if (c === 'transitions') dessinerTransitions();
-    else {
-      majCircuit();
-      if (etat.calques.circuit) cadrerCircuit();
-    }
-    majBoutonsCalques();
+  document.querySelectorAll('[data-etiquette]').forEach(b => b.addEventListener('click', () => {
+    const k = b.dataset.etiquette;
+    etat.etiquettes[k] = !etat.etiquettes[k];
+    b.classList.toggle('actif', etat.etiquettes[k]);
+    b.setAttribute('aria-pressed', String(etat.etiquettes[k]));
+    if (volA()) { dessinerCircuit(); dessinerEtiquettes(); }
   }));
-  // Comparaison
-  $('#fichier-b').addEventListener('change', (e) => { lireFichierB(e.target.files[0]); e.target.value = ''; });
-  $('#btn-changer-b').addEventListener('click', () => $('#fichier-b').click());
-  $('#btn-demo-b').addEventListener('click', () => chargerB(IGC.genererVolDemo({
-    graine: 11, pilote: 'Pilote B', immat: 'F-CBBB', concours: 'BB',
-    decalage: 420, vTransition: 40, zigzag: 20, bonusVz: -0.3
-  }), 'vol-demo-b.igc'));
-  $('#comp-alignement').addEventListener('change', (e) => {
-    etat.compAlignement = e.target.value;
-    etat.compIdx = null;
-    arreterLecture();
-    calculerComparaison();
+  $('#etape-prec').addEventListener('click', () => allerEtape(etat.etape - 1));
+  $('#etape-suiv').addEventListener('click', () => allerEtape(etat.etape + 1));
+  $('#suivre').addEventListener('change', (e) => { etat.suivre = e.target.checked; majCurseur(); });
+
+  $('#lecture').addEventListener('click', () => (etat.lecture ? arreterLecture() : lancerLecture()));
+  document.querySelectorAll('[data-vitesse]').forEach(b => b.addEventListener('click', () => {
+    etat.vitesse = +b.dataset.vitesse;
+    document.querySelectorAll('[data-vitesse]').forEach(x => x.classList.toggle('actif', x === b));
+  }));
+  $('#fixer-largage').addEventListener('click', () => {
+    const A = volA();
+    if (!A) return;
+    const i = indice(A.analyse.t, etat.t);
+    if (i <= A.analyse.deco || i >= A.analyse.atterro) { toast('Placez le curseur pendant le vol pour fixer le largage.'); return; }
+    A.largage = i;
+    analyserVol(A);
+    toutAfficher(false);
   });
-  $('#comp-mc').addEventListener('change', (e) => {
+  $('#largage-auto').addEventListener('click', () => {
+    const A = volA();
+    if (!A || A.largage == null) return;
+    A.largage = null;
+    analyserVol(A);
+    toutAfficher(false);
+  });
+
+  // Boutons du panneau latéral (contenu redessiné : délégation)
+  $('#lateral').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-action]');
+    if (!b) return;
+    const act = b.dataset.action, val = b.dataset.val;
+    if (act === 'type') { etat.typeCircuit = val; etat.typeForce = true; toutAfficher(false); }
+    else if (act === 'alignement') { etat.alignement = val; toutAfficher(false); }
+    else if (act === 'unite') { etat.uniteParcours = val; afficherLateral(); majCurseur(); }
+    else if (act === 'demo-b') {
+      const b2 = ajouterVol(IGC.genererVolDemo({ graine: 11, pilote: 'Pilote B', immat: 'F-CBBB', concours: 'BB', decalage: 420, vTransition: 40, zigzag: 20, bonusVz: -0.3 }), 'vol-demo-b.igc');
+      if (b2) { etat.idB = b2.id; toutAfficher(false); }
+    }
+  });
+  $('#lateral').addEventListener('change', (e) => {
+    if (e.target.id !== 'mc') return;
     const v = parseFloat(String(e.target.value).replace(',', '.'));
-    if (v > 0) etat.compMc = v;
-    calculerComparaison();
-  });
-  $('#comp-temps').addEventListener('input', (e) => { arreterLecture(); allerA(+e.target.value); });
-  $('#comp-lecture').addEventListener('click', basculerLecture);
-
-  $('#mc').addEventListener('change', (e) => {
-    const v = parseFloat(String(e.target.value).replace(',', '.'));
-    etat.mc = v > 0 ? v : null;
-    afficherTemps();
-  });
-  document.querySelector('.listes-temps').addEventListener('click', (e) => {
-    const li = e.target.closest('li[data-idx]');
-    if (li && etat.temps) selectionnerSegment(etat.temps.segments[+li.dataset.idx]);
-  });
-  $('#table-branches').addEventListener('click', (e) => {
-    const tr = e.target.closest('tr[data-branche]');
-    if (tr) selectionnerBranche(+tr.dataset.branche);
+    if (v > 0) { etat.mc = v; toutAfficher(false); }
   });
 
-  $('#fichier').addEventListener('change', (e) => { lireFichier(e.target.files[0]); e.target.value = ''; });
-  $('#btn-autre').addEventListener('click', () => $('#fichier').click());
-  $('#btn-demo').addEventListener('click', () => charger(IGC.genererVolDemo(), 'vol-demo.igc'));
-
-  document.querySelectorAll('[data-onglet]').forEach(b => b.addEventListener('click', () => montrerOnglet(b.dataset.onglet)));
-  document.querySelectorAll('.bascule button').forEach(b => b.addEventListener('click', () => {
-    etat.modeCouleur = b.dataset.mode;
-    document.querySelectorAll('.bascule button').forEach(x => x.classList.toggle('actif', x === b));
-    if (etat.analyse) dessinerTrace();
-  }));
-  $('#table-T').parentElement.addEventListener('click', (e) => {
-    const tr = e.target.closest('tr[data-k]');
-    if (tr) selectionner(tr.dataset.type, +tr.dataset.k);
+  // Clavier : espace = lecture, flèches = ±10 s (±60 s avec Maj)
+  document.addEventListener('keydown', (e) => {
+    if (!volA() || /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) return;
+    if (e.code === 'Space') { e.preventDefault(); etat.lecture ? arreterLecture() : lancerLecture(); }
+    else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+      e.preventDefault();
+      arreterLecture();
+      allerA(etat.t + (e.key === 'ArrowRight' ? 1 : -1) * (e.shiftKey ? 60 : 10));
+    }
   });
 
-  // Glisser-déposer n'importe où sur la page
+  // Glisser-déposer de fichiers n'importe où
   let compteurDrag = 0;
   const voile = $('#voile-depot');
-  window.addEventListener('dragenter', (e) => { e.preventDefault(); compteurDrag++; voile.hidden = false; $('#zone-depot').classList.add('survol'); });
-  window.addEventListener('dragleave', () => { if (--compteurDrag <= 0) { compteurDrag = 0; voile.hidden = true; $('#zone-depot').classList.remove('survol'); } });
+  window.addEventListener('dragenter', (e) => { e.preventDefault(); compteurDrag++; voile.hidden = false; });
+  window.addEventListener('dragleave', () => { if (--compteurDrag <= 0) { compteurDrag = 0; voile.hidden = true; } });
   window.addEventListener('dragover', (e) => e.preventDefault());
   window.addEventListener('drop', (e) => {
     e.preventDefault();
     compteurDrag = 0;
     voile.hidden = true;
-    $('#zone-depot').classList.remove('survol');
-    const f = e.dataTransfer.files[0];
-    if (etat.vue === 'comparaison' && etat.analyse) lireFichierB(f);
-    else lireFichier(f);
+    lireFichiers(e.dataTransfer.files);
   });
 })();

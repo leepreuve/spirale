@@ -254,8 +254,14 @@
     if (deco < 0 || atterro <= deco) { deco = 0; atterro = n - 1; }
 
     // --- Largage (fin du remorqué ou du treuil) -------------------------
-    let largage = deco;
-    {
+    // Départ en vol (Condor, enregistrement commencé en l'air) : pas de remorqué.
+    // Largage forcé (reglages.largage = indice du point) : choisi à la main.
+    const departEnVol = deco <= 2 && enVol(0);
+    let largage = deco, largageAuto = true;
+    if (R.largage != null && R.largage > deco && R.largage < atterro) {
+      largage = R.largage;
+      largageAuto = false;
+    } else if (!departEnVol) {
       let maxAlt = alt[deco], iMax = deco, trouve = false;
       for (let i = deco; i <= atterro && t[i] < t[deco] + R.dureeMaxRemorque; i++) {
         if (alt[i] > maxAlt) { maxAlt = alt[i]; iMax = i; }
@@ -467,7 +473,7 @@
       entete: vol.entete, date: vol.date, circuitIGC: vol.circuit || [], tempsCircuitIGC: vol.tempsCircuit || null,
       sourceAlt: avecGps ? 'GPS' : 'pression',
       points: P, t, alt, vit, vz, virage, cum,
-      deco, atterro, largage,
+      deco, atterro, largage, largageAuto, departEnVol,
       phases, phaseDe, thermiques, transitions, totaux
     };
   }
@@ -1074,7 +1080,7 @@
       'LSEEYOU OZ=0,Style=1,R1=15000m,A1=180',
       'LSEEYOU OZ=1,Style=1,R1=8000m,A1=180',
       'LSEEYOU OZ=2,Style=3,R1=3000m,A1=180',
-      'LSEEYOU TSK,NoStart=13:00:00,TaskTime=01:30:00,WpDis=False'
+      'LSEEYOU TSK,NoStart=13:00:00,TaskTime=01:00:00,WpDis=False'
     ];
     const p2 = n => String(n).padStart(2, '0');
     const coord = (v, nbDeg) => {
