@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Spirale — analyse de vol</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-  <link rel="stylesheet" href="style.css?v=202611061135">
+  <link rel="stylesheet" href="style.css?v=202611061146">
 </head>
 <body>
   <header class="barre">
@@ -49,6 +49,7 @@
         <button data-vue="analyse" class="actif" role="tab">Analyse de vol</button>
         <button data-vue="AAT" role="tab">Circuit AAT</button>
         <button data-vue="CT" role="tab">Circuit CT</button>
+        <button data-vue="comparaison" role="tab">Comparaison</button>
       </div>
 
       <div class="grille-haut">
@@ -97,6 +98,75 @@
           <div id="kpi-circuit" class="tuiles"></div>
         </div>
         <div class="table-wrap"><table id="table-branches"></table></div>
+      </div>
+
+      <!-- Comparaison de deux vols -->
+      <div id="panneau-comparaison" class="panneau" hidden>
+        <div class="panneau-titre">
+          <h2>Comparaison de deux vols</h2>
+          <span id="comp-circuit" class="discret"></span>
+        </div>
+
+        <div id="comp-chargement" class="comp-chargement">
+          <p>Chargez le vol d'un autre pilote sur la même épreuve. L'avance et le retard sont calculés le long du circuit,
+            en tenant compte de l'altitude, et le bilan montre où se fait la différence.</p>
+          <div class="boutons-gauche">
+            <label class="btn principal">Charger le vol à comparer
+              <input type="file" id="fichier-b" accept=".igc,.IGC" hidden>
+            </label>
+            <button id="btn-demo-b" class="btn secondaire">Comparer avec un vol de démo</button>
+          </div>
+          <p class="discret petit">Vous pouvez aussi glisser le fichier IGC sur la page.</p>
+          <p id="comp-erreur" class="erreur" hidden></p>
+        </div>
+
+        <div id="comp-contenu" hidden>
+          <div class="comp-tete">
+            <div id="comp-pilotes" class="comp-pilotes"></div>
+            <div class="comp-reglages">
+              <label>Temps
+                <select id="comp-alignement">
+                  <option value="course">Chacun depuis son départ</option>
+                  <option value="reel">Heure réelle</option>
+                </select>
+              </label>
+              <label>Compensation altitude (MC)
+                <input type="number" id="comp-mc" step="0.1" min="0.2"> m/s
+              </label>
+              <button id="btn-changer-b" class="btn secondaire">Changer le vol B</button>
+            </div>
+          </div>
+
+          <div class="comp-direct">
+            <button id="comp-lecture" class="btn principal comp-play" aria-label="Lire le vol">▶</button>
+            <div class="comp-curseur">
+              <input type="range" id="comp-temps" min="0" max="100" value="100" aria-label="Moment du vol">
+              <div id="comp-lecture-txt" class="comp-lecture-txt"></div>
+            </div>
+          </div>
+          <div id="comp-etat" class="comp-etat"></div>
+
+          <h3 class="sous-titre">Avance et retard en direct</h3>
+          <div class="comp-graphe"><canvas id="graphe-avance"></canvas></div>
+          <h3 class="sous-titre">Altitudes</h3>
+          <div class="comp-graphe petit"><canvas id="graphe-alt-comp"></canvas></div>
+
+          <h3 class="sous-titre">Qui gagne grâce à quoi</h3>
+          <p id="comp-resume" class="comp-resume"></p>
+          <div class="comp-bilan">
+            <div class="comp-decomp"><canvas id="graphe-decomp"></canvas></div>
+            <ul id="comp-explications" class="comp-explications"></ul>
+          </div>
+
+          <h3 class="sous-titre">Pilote contre pilote</h3>
+          <div class="table-wrap"><table id="table-comp" class="table-comp"></table></div>
+
+          <h3 class="sous-titre">Branche par branche</h3>
+          <div class="table-wrap"><table id="table-comp-branches"></table></div>
+          <p class="discret petit">Avance compensée : écart de temps au même endroit du circuit, plus l'écart d'altitude converti en temps
+            au taux de montée MC. Le bilan « qui gagne grâce à quoi » répartit l'écart de temps total entre la spirale,
+            la vitesse et la finesse en transition, le cheminement et l'altitude de départ et d'arrivée.</p>
+        </div>
       </div>
 
       <div class="panneau">
@@ -171,7 +241,7 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-  <script src="analyse.js?v=202611061135"></script>
-  <script src="app.js?v=202611061135"></script>
+  <script src="analyse.js?v=202611061146"></script>
+  <script src="app.js?v=202611061146"></script>
 </body>
 </html>

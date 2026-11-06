@@ -493,7 +493,7 @@
     }
     const duree = a.t[e] - a.t[s];
     return {
-      duree, tempsT, gainT,
+      duree, tempsT, gainT, tempsG, distG, perteG, hDebut: a.alt[s], hFin: a.alt[e],
       vzT: tempsT > 0 ? gainT / tempsT : null,
       pctSpirale: duree > 0 ? tempsT / duree : null,
       finesse: perteG > 0 ? distG / perteG : (distG > 0 ? Infinity : null),
@@ -846,24 +846,223 @@
   }
 
   // =====================================================================
-  // 5. VOL DE DÉMONSTRATION (simulé, pour tester sans fichier)
+  // 5. COMPARAISON DE DEUX VOLS
   // =====================================================================
-  function genererVolDemo() {
-    let graine = 7;
+  // Progression sur le circuit : pour chaque point, part du circuit déjà faite (0 → 1).
+  // Le chemin de référence est celui que le pilote a réellement validé
+  // (centres en CT, points retenus dans les zones en AAT), complété par les
+  // centres des zones qu'il n'a pas atteintes.
+  // restant = distance jusqu'au prochain point du chemin + branches suivantes.
+  function progression(a, circ) {
+    if (!circ || !circ.nbAtteints || !circ.chemin.length) return null;
+    const P = a.points, n = P.length;
+    const chemin = circ.chemin.map(p => ({ lat: p.lat, lon: p.lon, i: p.i }));
+    for (let k = chemin.length; k < circ.zones.length; k++) {
+      chemin.push({ lat: circ.zones[k].lat, lon: circ.zones[k].lon, i: Infinity });
+    }
+    const m = chemin.length;
+    const reste = new Float64Array(m);
+    for (let j = m - 2; j >= 0; j--) reste[j] = reste[j + 1] + distance(chemin[j], chemin[j + 1]);
+    const L = reste[0];
+    const iDep = chemin[0].i;
+    const iFin = circ.termine ? chemin[m - 1].i : a.atterro;
+    const f = new Float64Array(n);      // progression brute
+    const env = new Float64Array(n);    // progression déjà acquise (maximum atteint jusque-là)
+    let j = 1, max = 0;
+    for (let i = 0; i < n; i++) {
+      if (i < iDep) { f[i] = 0; env[i] = 0; continue; }
+      if (circ.termine && i >= iFin) { f[i] = 1; max = 1; env[i] = 1; continue; }
+      while (j < m - 1 && chemin[j].i <= i) j++;
+      const restant = distance(P[i], chemin[j]) + reste[j];
+      f[i] = Math.max(0, Math.min(1, (L - restant) / L));
+      if (f[i] > max) max = f[i];
+      env[i] = max;
+    }
+    return { f, env, L, iDep, iFin, termine: circ.termine, chemin };
+  }
+
+  // Série temporelle d'un pilote, avec une origine de temps (son départ ou minuit)
+  function serie(a, pr, origine) {
+    return { a, pr, origine, tDep: a.t[pr.iDep] - origine, tFin: a.t[pr.iFin] - origine };
+  }
+
+  function indiceAuTemps(a, t) {
+    const T = a.t;
+    if (t <= T[0]) return 0;
+    if (t >= T[T.length - 1]) return T.length - 1;
+    let lo = 0, hi = T.length - 1;
+    while (hi - lo > 1) { const mi = (lo + hi) >> 1; if (T[mi] <= t) lo = mi; else hi = mi; }
+    return lo;
+  }
+
+  // État d'un pilote au temps τ (dans son repère) ; après l'arrivée on garde l'état d'arrivée
+  function etatAu(S, tau) {
+    const a = S.a, fini = S.pr.termine && tau >= S.tFin;
+    const tt = (fini ? S.tFin : tau) + S.origine;
+    const i = indiceAuTemps(a, tt);
+    const i2 = Math.min(i + 1, a.t.length - 1);
+    const r = i2 > i ? Math.max(0, Math.min(1, (tt - a.t[i]) / (a.t[i2] - a.t[i]))) : 0;
+    return {
+      i, fini,
+      f: S.pr.env[i] + (S.pr.env[i2] - S.pr.env[i]) * r,
+      h: a.alt[i] + (a.alt[i2] - a.alt[i]) * r
+    };
+  }
+
+  // Premier instant où le pilote a atteint la progression f (et son altitude à ce moment)
+  function quandProgression(S, f) {
+    const a = S.a, env = S.pr.env;
+    let lo = S.pr.iDep, hi = S.pr.iFin;
+    if (env[hi] < f) return null;
+    if (env[lo] >= f) return { tau: a.t[lo] - S.origine, h: a.alt[lo], i: lo };
+    while (hi - lo > 1) { const mi = (lo + hi) >> 1; if (env[mi] >= f) hi = mi; else lo = mi; }
+    const r = env[hi] > env[lo] ? (f - env[lo]) / (env[hi] - env[lo]) : 1;
+    return {
+      tau: a.t[lo] + (a.t[hi] - a.t[lo]) * r - S.origine,
+      h: a.alt[lo] + (a.alt[hi] - a.alt[lo]) * r,
+      i: hi
+    };
+  }
+
+  // Avance de A sur B au temps τ (s). Positif = A devant.
+  // On compare à même position sur le circuit : le retardataire passe là où le leader
+  // était plus tôt. Écart de temps + écart d'altitude converti en temps (hauteur / MC).
+  function avanceAu(SA, SB, tau, mc) {
+    const eA = etatAu(SA, tau), eB = etatAu(SB, tau);
+    if (eA.f <= 0 && eB.f <= 0) return { brut: 0, comp: 0, eA, eB };
+    const devantA = eA.f >= eB.f;
+    const [Sl, et] = devantA ? [SA, eB] : [SB, eA];       // leader, état du retardataire
+    const Sr = devantA ? SB : SA;
+    const q = quandProgression(Sl, et.f);
+    if (!q) return { brut: 0, comp: 0, eA, eB };
+    const tRetard = et.fini ? Sr.tFin : tau;
+    const brut = tRetard - q.tau;
+    const comp = brut + (et.fini || et.f <= 0 ? 0 : (q.h - et.h) / mc);
+    return { brut: devantA ? brut : -brut, comp: devantA ? comp : -comp, eA, eB };
+  }
+
+  function comparerVols(A, B, opts) {
+    opts = opts || {};
+    const prA = progression(A.a, A.circ), prB = progression(B.a, B.circ);
+    if (!prA || !prB) {
+      return { erreur: !prA && !prB ? 'Aucun des deux vols ne prend le départ du circuit.'
+        : `Le vol ${!prA ? 'A' : 'B'} ne prend pas le départ du circuit.` };
+    }
+    const mc = opts.mc > 0 ? opts.mc : 1.5;
+    const course = opts.alignement !== 'reel';
+    const SA = serie(A.a, prA, course ? A.a.t[prA.iDep] : 0);
+    const SB = serie(B.a, prB, course ? B.a.t[prB.iDep] : 0);
+
+    // --- Avance / retard en continu
+    const tMin = course ? 0 : Math.min(SA.tDep, SB.tDep) - 120;
+    const tMax = Math.max(SA.tFin, SB.tFin) + (course ? 60 : 120);
+    const pas = Math.max(5, Math.ceil((tMax - tMin) / 1500));
+    const grille = [];
+    for (let tau = tMin; tau <= tMax; tau += pas) {
+      const r = avanceAu(SA, SB, tau, mc);
+      grille.push({ tau, comp: r.comp, brut: r.brut, fA: r.eA.f, fB: r.eB.f, hA: r.eA.h, hB: r.eB.h, iA: r.eA.i, iB: r.eB.i });
+    }
+
+    // --- Points du circuit : temps de passage et avance au point
+    const points = [];
+    const nP = Math.min(prA.chemin.length, prB.chemin.length);
+    for (let k = 0; k < nP; k++) {
+      const ia = prA.chemin[k].i, ib = prB.chemin[k].i;
+      if (!isFinite(ia) || !isFinite(ib)) break;
+      const tA = A.a.t[ia] - SA.origine, tB = B.a.t[ib] - SB.origine;
+      const fin = k === nP - 1 && prA.termine && prB.termine;
+      const hA = A.a.alt[ia], hB = B.a.alt[ib];
+      points.push({ k, tA, tB, hA, hB, ia, ib, comp: (tB - tA) + (fin || k === 0 ? 0 : (hA - hB) / mc) });
+    }
+    const branches = [];
+    for (let k = 1; k < points.length; k++) {
+      const p0 = points[k - 1], p1 = points[k];
+      const dA = distance(prA.chemin[k - 1], prA.chemin[k]), dB = distance(prB.chemin[k - 1], prB.chemin[k]);
+      const durA = p1.tA - p0.tA, durB = p1.tB - p0.tB;
+      const sA = statsIntervalle(A.a, p0.ia, p1.ia), sB = statsIntervalle(B.a, p0.ib, p1.ib);
+      branches.push({
+        k, durA, durB, dA, dB, vA: dA / durA, vB: dB / durB,
+        vzA: sA.vzT, vzB: sB.vzT, ecart: durB - durA, avanceAuPoint: p1.comp
+      });
+    }
+
+    // --- Qui gagne grâce à quoi : décomposition sur la partie commune du circuit
+    const fc = Math.min(prA.env[prA.iFin], prB.env[prB.iFin]);
+    let bilan = null;
+    if (fc > 0.05) {
+      const mesure = (S) => {
+        const q = quandProgression(S, fc);
+        const e = Math.max(S.pr.iDep + 1, q.i);
+        const st = statsIntervalle(S.a, S.pr.iDep, e);
+        const D = fc * S.pr.L;
+        const nbTh = S.a.thermiques.filter(x => x.s >= S.pr.iDep && x.s < e && x.gain > 0).length;
+        return {
+          e, D, duree: st.duree, st, nbTh,
+          k: st.distG / D,
+          vg: st.tempsG > 0 ? st.distG / st.tempsG : 30,
+          ld: st.perteG > 1 ? Math.min(200, st.distG / st.perteG) : 200,
+          vz: st.tempsT > 0 && st.gainT > 0 ? Math.max(0.1, st.gainT / st.tempsT) : 0.1,
+          e2: (st.hFin - st.hDebut) / D,
+          vitesse: D / st.duree
+        };
+      };
+      const mA = mesure(SA), mB = mesure(SB);
+      const Dref = (mA.D + mB.D) / 2;
+      const F = (x) => Dref * (x.k / x.vg + (x.k / x.ld + x.e2) / x.vz);
+      const facteurs = ['vz', 'vg', 'ld', 'k', 'e2'];
+      const fact = [1, 1, 2, 6, 24, 120];
+      const nF = facteurs.length;
+      const parts = {};
+      for (let q = 0; q < nF; q++) {
+        let phi = 0;
+        for (let masque = 0; masque < (1 << nF); masque++) {
+          if (masque & (1 << q)) continue;
+          let s = 0;
+          const x0 = {}, x1 = {};
+          for (let r = 0; r < nF; r++) {
+            const deA = (masque & (1 << r)) !== 0;
+            if (deA) s++;
+            x0[facteurs[r]] = deA ? mA[facteurs[r]] : mB[facteurs[r]];
+            x1[facteurs[r]] = (deA || r === q) ? mA[facteurs[r]] : mB[facteurs[r]];
+          }
+          phi += fact[s] * fact[nF - s - 1] / fact[nF] * (F(x1) - F(x0));
+        }
+        parts[facteurs[q]] = -phi; // secondes gagnées par A grâce à ce facteur
+      }
+      const memeDistance = Math.abs(mA.D - mB.D) < 0.002 * Dref;
+      bilan = {
+        fc, Dref, mA, mB, parts, memeDistance,
+        total: F(mB) - F(mA), // secondes gagnées par A (à distance égale)
+        vitesseA: mA.vitesse, vitesseB: mB.vitesse
+      };
+    }
+
+    return { SA, SB, prA, prB, mc, course, pas, grille, points, branches, bilan };
+  }
+
+  // =====================================================================
+  // 6. VOL DE DÉMONSTRATION (simulé, pour tester sans fichier)
+  // =====================================================================
+  // opts : graine (vol différent), pilote, immat, concours, decalage (s),
+  //        vTransition (m/s air), zigzag (° d'écart de cap en transition), bonusVz (m/s)
+  function genererVolDemo(opts) {
+    const o = Object.assign({ graine: 7, pilote: 'Pilote Demo', immat: 'F-CDEM', concours: 'DM',
+      decalage: 0, vTransition: 36, zigzag: 0, bonusVz: 0 }, opts || {});
+    let graine = o.graine;
     const alea = () => { graine = (graine * 16807) % 2147483647; return graine / 2147483647; };
     const SOL = 270;
     const maison = { lat: 43.737, lon: 5.784 };
     const ventDe = 300 * RAD, ventV = 15 / 3.6;
     const wx = -Math.sin(ventDe) * ventV, wy = -Math.cos(ventDe) * ventV;
 
-    let lat = maison.lat, lon = maison.lon, alt = SOL, t = 11 * 3600 + 2 * 60, capDeg = 300;
+    let lat = maison.lat, lon = maison.lon, alt = SOL, t = 11 * 3600 + 2 * 60 + o.decalage, capDeg = 300;
     const lignes = [
       'AXXXDEMO',
       'HFDTEDATE:120726,01',
-      'HFPLTPILOTINCHARGE:Pilote Demo',
+      'HFPLTPILOTINCHARGE:' + o.pilote,
       'HFGTYGLIDERTYPE:Discus 2b',
-      'HFGIDGLIDERID:F-CDEM',
-      'HFCIDCOMPETITIONID:DM',
+      'HFGIDGLIDERID:' + o.immat,
+      'HFCIDCOMPETITIONID:' + o.concours,
       'C120726105500120726000102Circuit demo',
       'C4344220N00547040EVinon',
       'C4344220N00547040EVinon',
@@ -930,12 +1129,12 @@
         if (d < cibles[k].seuil) { k++; if (k >= cibles.length) break; continue; }
         const final = k === cibles.length - 1;
         if ((!final && alt < 1000 + alea() * 200) || (final && alt < SOL + 300 + d / 25)) break;
-        tournerVers(cap(ici, cibles[k]), 3);
-        avancer(36, -1.3 + 0.6 * Math.sin(t / 40) + (alea() - 0.5) * 0.4);
+        tournerVers(cap(ici, cibles[k]) + o.zigzag * Math.sin(t / 90), 3);
+        avancer(o.vTransition, -1.3 * Math.pow(o.vTransition / 36, 2) + 0.6 * Math.sin(t / 40) + (alea() - 0.5) * 0.4);
       }
       if (k >= cibles.length) break;
       // Thermique
-      const fort = 1.5 + alea() * 2.2;
+      const fort = 1.5 + alea() * 2.2 + o.bonusVz;
       const sens = alea() < 0.6 ? 1 : -1;
       const dMaison = distance({ lat, lon }, maison);
       let sommet = 1900 + alea() * 400;
@@ -958,6 +1157,7 @@
 
   const IGC = {
     lire, analyser, analyserCircuit, analyserTemps, statsIntervalle, genererVolDemo,
+    progression, comparerVols, avanceAu, etatAu,
     preparerZones, contourZone, contient, destination, REGLAGES, distance
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = IGC;

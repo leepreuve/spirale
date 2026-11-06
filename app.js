@@ -17,6 +17,13 @@
     resCircuit: null,
     typeCircuit: 'CT',       // type de circuit affiché en mode "Analyse de vol"
     calques: { circuit: true, thermiques: true, transitions: true }, // affichage sur la carte
+    nomFichier: '',
+    vol2: null,              // vol comparé : { analyse, nom }
+    comp: null,              // résultat de la comparaison
+    compIdx: 0,              // position du curseur dans la comparaison
+    compLecture: null,       // minuterie de lecture
+    compAlignement: 'course',
+    compMc: null,
     mc: null,                // Vz de référence choisi (null = Vz moyen du vol)
     temps: null              // résultat gains / pertes de temps
   };
@@ -128,6 +135,8 @@
       return;
     }
     etat.analyse = a;
+    etat.nomFichier = nom;
+    etat.comp = null;
     etat.temps = null;
     etat.resCircuit = null;
     etat.selection = null;
@@ -259,10 +268,12 @@
       etat.couches.trace = L.layerGroup().addTo(carte);
       etat.couches.selection = L.layerGroup().addTo(carte);
       etat.couches.circuit = L.layerGroup().addTo(carte);
+      etat.couches.vol2 = L.layerGroup().addTo(carte);
       etat.couches.transitions = L.layerGroup().addTo(carte);
       etat.couches.thermiques = L.layerGroup().addTo(carte);
       etat.couches.temps = L.layerGroup().addTo(carte);
       etat.couches.reperes = L.layerGroup().addTo(carte);
+      etat.couches.planeurs = L.layerGroup().addTo(carte);
       carte.on('click', (e) => { if (etat.dessin) ajouterPoint(e.latlng.lat, e.latlng.lng); });
       etat.marqueur = L.circleMarker([0, 0], { radius: 7, color: '#fff', weight: 2.5, fillColor: '#111', fillOpacity: 1 });
       etat.carte = carte;
@@ -293,6 +304,11 @@
   function dessinerTrace() {
     const a = etat.analyse, P = a.points;
     etat.couches.trace.clearLayers();
+    if (etat.vue === 'comparaison' && etat.comp && !etat.comp.erreur) {
+      dessinerCarteComparaison();
+      return;
+    }
+    if (etat.couches.vol2) { etat.couches.vol2.clearLayers(); etat.couches.planeurs.clearLayers(); }
     let coulTemps = null;
     if (etat.modeCouleur === 'temps' && etat.temps) {
       coulTemps = new Array(P.length).fill(css('--remorque'));
@@ -609,7 +625,7 @@
     const a = etat.analyse;
     const g = etat.couches.thermiques;
     g.clearLayers();
-    if (!etat.calques.thermiques) return;
+    if (!etat.calques.thermiques || etat.vue === 'comparaison') return;
     a.thermiques.forEach((th, k) => {
       if (th.gain <= 0) return;
       L.circleMarker([th.centre.lat, th.centre.lon], {
@@ -629,7 +645,7 @@
     const a = etat.analyse;
     const g = etat.couches.transitions;
     g.clearLayers();
-    if (!etat.calques.transitions) return;
+    if (!etat.calques.transitions || etat.vue === 'comparaison') return;
     a.transitions.forEach((tr, k) => {
       if (tr.dist < 2000 || tr.duree < 45) return; // on ignore les petits bouts de ligne droite
       // Point situé à mi-distance de la transition
@@ -657,12 +673,15 @@
       if (b.dataset.calque === 'circuit') {
         b.disabled = sansCircuit;
         b.title = sansCircuit ? 'Aucun circuit : ouvrez « Circuit AAT » ou « Circuit CT » pour en dessiner un' : '';
+      } else {
+        b.disabled = etat.vue === 'comparaison';
+        b.title = b.disabled ? 'Masqué pendant la comparaison' : '';
       }
     });
   }
 
   // Type de circuit utilisé pour le calcul : celui du mode, ou en "Analyse de vol" le dernier choisi
-  function typeActif() { return etat.vue === 'analyse' ? etat.typeCircuit : etat.vue; }
+  function typeActif() { return (etat.vue === 'AAT' || etat.vue === 'CT') ? etat.vue : etat.typeCircuit; }
 
   // ===================================================================
   // Mode : Analyse de vol / Circuit AAT / Circuit CT
@@ -670,16 +689,21 @@
   function afficherVue() {
     const v = etat.vue;
     document.querySelectorAll('[data-vue]').forEach(b => b.classList.toggle('actif', b.dataset.vue === v));
-    $('#panneau-circuit').hidden = v === 'analyse';
+    $('#panneau-circuit').hidden = v === 'analyse' || v === 'comparaison';
+    $('#panneau-comparaison').hidden = v !== 'comparaison';
+    $('.bascule').hidden = v === 'comparaison';
+    if (v !== 'comparaison') arreterLecture();
     $('#ligne-temps-mini').hidden = v !== 'AAT';
     $('#titre-circuit').textContent = v === 'AAT'
       ? 'Circuit AAT — épreuve à zones'
       : 'Circuit CT — circuit à points de virage';
-    if (v === 'analyse') basculerDessin(false);
+    if (v === 'analyse' || v === 'comparaison') basculerDessin(false);
     else etat.typeCircuit = v;
     dessinerThermiques();
     dessinerTransitions();
     majCircuit();
+    if (v === 'comparaison') calculerComparaison();
+    else if (etat.couches.vol2) dessinerTrace();
     if (etat.calques.circuit && etat.circuit.length >= 2) cadrerCircuit();
   }
 
@@ -709,8 +733,8 @@
     }));
   }
 
-  function chargerCircuitIGC() {
-    const a = etat.analyse;
+  function chargerCircuitIGC(source) {
+    const a = source || etat.analyse;
     const c = (a && a.circuitIGC) || [];
     // On garde tout ce qui est déclaré : rayon propre à chaque zone, secteur, ligne…
     etat.circuit = c.map(p => Object.assign({}, p, { nomAuto: !p.nom, rayon: p.rayon != null ? p.rayon : null }));
@@ -1029,6 +1053,405 @@
     if (etat.modeCouleur === 'temps') dessinerTrace();
   }
 
+  // ===================================================================
+  // Comparaison de deux vols
+  // ===================================================================
+  const nomPilote = (an, fichier) =>
+    (an.entete && (an.entete.pilote || an.entete.concours)) || String(fichier || '').replace(/\.igc$/i, '') || '?';
+  const nomA = () => nomPilote(etat.analyse, etat.nomFichier);
+  const nomB = () => (etat.vol2 ? nomPilote(etat.vol2.analyse, etat.vol2.nom) : 'B');
+  const nomDe = (cote) => (cote === 'a' ? nomA() : nomB());
+  const avantage = (x) => (Math.abs(x) < 3 ? '≈ égalité' : `${x > 0 ? 'A' : 'B'} +${fmtDuree(Math.abs(x))}`);
+
+  const FACTEURS = {
+    vz: { nom: 'Spirale', grace: 'à la spirale', sur: 'sur la spirale',
+      detail: (m) => `Vz moyen ${signe(m.vz, 2)} m/s, ${nf(m.st.tempsT / m.st.duree * 100)} % du temps en spirale` },
+    vg: { nom: 'Vitesse en transition', grace: 'à la vitesse en transition', sur: 'sur la vitesse en transition',
+      detail: (m) => `${nf(m.vg * 3.6)} km/h` },
+    ld: { nom: 'Finesse en transition', grace: 'à la finesse en transition', sur: 'sur la finesse en transition',
+      detail: (m) => `finesse ${nf(m.ld, 1)}` },
+    k: { nom: 'Cheminement', grace: 'au cheminement', sur: 'sur le cheminement',
+      detail: (m) => `${nf(m.k * 100)} km en transition pour 100 km de circuit` },
+    e2: { nom: 'Altitude départ / arrivée', grace: "à l'altitude de départ et d'arrivée", sur: "sur l'altitude de départ et d'arrivée",
+      detail: (m) => `départ ${nf(m.st.hDebut)} m, fin ${nf(m.st.hFin)} m` }
+  };
+
+  function lireFichierB(f) {
+    if (!f) return;
+    const r = new FileReader();
+    r.onload = () => chargerB(r.result, f.name);
+    r.onerror = () => erreurB('Impossible de lire ce fichier.');
+    r.readAsText(f);
+  }
+
+  function erreurB(msg) {
+    const el = $('#comp-erreur');
+    el.textContent = msg;
+    el.hidden = false;
+    $('#comp-chargement').hidden = false;
+    $('#comp-contenu').hidden = true;
+  }
+
+  function chargerB(texte, nom) {
+    let b;
+    try {
+      b = IGC.analyser(IGC.lire(texte));
+    } catch (e) {
+      erreurB(e.message || "Erreur pendant l'analyse du fichier.");
+      return;
+    }
+    arreterLecture();
+    etat.vol2 = { analyse: b, nom };
+    etat.compMc = null;
+    etat.compIdx = null;
+    $('#comp-erreur').hidden = true;
+    // Le vol A n'a pas de circuit : on prend celui déclaré dans le vol B
+    if (etat.circuit.length < 2 && b.circuitIGC.length >= 2) chargerCircuitIGC(b);
+    if (etat.vue !== 'comparaison') { etat.vue = 'comparaison'; afficherVue(); }
+    else { majCircuit(); calculerComparaison(); }
+  }
+
+  function calculerComparaison() {
+    const a = etat.analyse, v2 = etat.vol2;
+    $('#comp-chargement').hidden = !!v2;
+    $('#comp-contenu').hidden = !v2;
+    etat.comp = null;
+    if (!v2) { dessinerTrace(); return; }
+    const Z = zonesEffectives();
+    if (Z.length < 2) {
+      erreurB('Il faut un circuit pour comparer, et aucun des deux fichiers n\'en déclare. Dessinez-le dans « Circuit AAT » ou « Circuit CT », puis revenez ici.');
+      dessinerTrace();
+      return;
+    }
+    const type = typeActif();
+    $('#comp-circuit').textContent = `Circuit ${type} : ${Z.map(z => z.nom).join(' → ')}`;
+    const circA = IGC.analyserCircuit(a, Z, type, { tempsMini: etat.tempsMini });
+    const circB = IGC.analyserCircuit(v2.analyse, Z, type, { tempsMini: etat.tempsMini });
+    if (etat.compMc == null) {
+      const vz = [a.totaux.vzMoyThermique, v2.analyse.totaux.vzMoyThermique].filter(x => x > 0);
+      etat.compMc = vz.length ? Math.round(vz.reduce((s, x) => s + x, 0) / vz.length * 10) / 10 : 1.5;
+    }
+    $('#comp-mc').value = etat.compMc.toFixed(1);
+    $('#comp-alignement').value = etat.compAlignement;
+    const r = IGC.comparerVols({ a, circ: circA }, { a: v2.analyse, circ: circB },
+      { mc: etat.compMc, alignement: etat.compAlignement });
+    if (r.erreur) {
+      erreurB(`${r.erreur} Vérifiez que les deux vols correspondent bien au même circuit.`);
+      dessinerTrace();
+      return;
+    }
+    etat.comp = r;
+    $('#comp-erreur').hidden = true;
+    afficherPilotes();
+    afficherGraphesComparaison();
+    afficherBilan();
+    afficherTablesComparaison();
+    $('#comp-temps').max = String(r.grille.length - 1);
+    if (etat.compIdx == null || etat.compIdx >= r.grille.length) etat.compIdx = r.grille.length - 1;
+    $('#comp-temps').value = String(etat.compIdx);
+    dessinerTrace();
+    majCurseurComparaison();
+  }
+
+  function afficherPilotes() {
+    const ligne = (cl, nom, an) => `<span class="pilote"><span class="badge ${cl}">${cl.toUpperCase()}</span>
+      <span><b>${echapper(nom)}</b><br><span class="discret">${echapper([an.entete.planeur, an.entete.immat, an.entete.concours].filter(Boolean).join(' · '))}</span></span></span>`;
+    $('#comp-pilotes').innerHTML = ligne('a', nomA(), etat.analyse) + ligne('b', nomB(), etat.vol2.analyse);
+  }
+
+  function fmtTauCourt(tau) {
+    if (!etat.comp || !etat.comp.course) return fmtHeure(tau);
+    const s = Math.max(0, Math.round(tau));
+    return `${Math.floor(s / 3600)}:${p2(Math.floor(s % 3600 / 60))}`;
+  }
+
+  // Ligne verticale du curseur sur les graphiques de comparaison
+  const pluginCurseurComp = {
+    id: 'curseurComp',
+    afterDatasetsDraw(chart) {
+      const r = etat.comp;
+      if (!r || etat.compIdx == null) return;
+      const { ctx, chartArea: z, scales: { x, y } } = chart;
+      ctx.save();
+      // ligne du zéro (graphique d'avance)
+      if (chart === etat.grapheAvance && y && y.min < 0 && y.max > 0) {
+        const py = y.getPixelForValue(0);
+        ctx.strokeStyle = css('--texte-2');
+        ctx.globalAlpha = 0.6;
+        ctx.beginPath(); ctx.moveTo(z.left, py); ctx.lineTo(z.right, py); ctx.stroke();
+      }
+      const px = x.getPixelForValue(r.grille[etat.compIdx].tau);
+      if (px >= z.left && px <= z.right) {
+        ctx.strokeStyle = css('--texte');
+        ctx.globalAlpha = 0.7;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.moveTo(px, z.top); ctx.lineTo(px, z.bottom); ctx.stroke();
+      }
+      ctx.restore();
+    }
+  };
+
+  function indiceGrille(tau) {
+    const g = etat.comp.grille;
+    return Math.max(0, Math.min(g.length - 1, Math.round((tau - g[0].tau) / etat.comp.pas)));
+  }
+
+  function afficherGraphesComparaison() {
+    const r = etat.comp, g = r.grille;
+    const cA = css('--pilote-a'), cB = css('--pilote-b'), grille = css('--grille');
+    if (etat.grapheAvance) etat.grapheAvance.destroy();
+    if (etat.grapheAltComp) etat.grapheAltComp.destroy();
+    const echelleX = () => ({
+      type: 'linear', min: g[0].tau, max: g[g.length - 1].tau, grid: { color: grille },
+      ticks: { callback: (v) => fmtTauCourt(v), maxTicksLimit: 8, maxRotation: 0 },
+      title: { display: true, text: r.course ? 'temps depuis le départ de chacun' : 'heure' }
+    });
+    const survol = (ev, _els, chart) => {
+      if (!ev || ev.x == null) return;
+      const x = chart.scales.x.getValueForPixel(ev.x);
+      if (x >= chart.scales.x.min && x <= chart.scales.x.max) allerA(indiceGrille(x));
+    };
+    const options = (titreY) => ({
+      animation: false, responsive: true, maintainAspectRatio: false, parsing: false, normalized: true,
+      interaction: { mode: 'nearest', axis: 'x', intersect: false },
+      scales: { x: echelleX(), y: { grid: { color: grille }, title: { display: true, text: titreY } } },
+      plugins: { legend: { position: 'top', align: 'end', labels: { boxWidth: 12, boxHeight: 2 } }, tooltip: { enabled: false } },
+      onHover: survol, onClick: survol
+    });
+    etat.grapheAvance = new Chart($('#graphe-avance'), {
+      type: 'line',
+      data: {
+        datasets: [
+          {
+            label: 'Avance compensée de l\'altitude', data: g.map(p => ({ x: p.tau, y: p.comp / 60 })),
+            borderWidth: 2, pointRadius: 0, borderColor: cA,
+            segment: { borderColor: (c) => ((c.p0.parsed.y + c.p1.parsed.y) / 2 >= 0 ? cA : cB) },
+            fill: { target: 'origin', above: alpha(cA, 0.18), below: alpha(cB, 0.18) }
+          },
+          {
+            label: 'Sans compensation', data: g.map(p => ({ x: p.tau, y: p.brut / 60 })),
+            borderWidth: 1, pointRadius: 0, borderDash: [4, 4], borderColor: css('--texte-2')
+          }
+        ]
+      },
+      options: options(`minutes · haut : A devant · bas : B devant`),
+      plugins: [pluginCurseurComp]
+    });
+    etat.grapheAltComp = new Chart($('#graphe-alt-comp'), {
+      type: 'line',
+      data: {
+        datasets: [
+          { label: 'A · ' + nomA(), data: g.map(p => ({ x: p.tau, y: p.hA })), borderWidth: 1.5, pointRadius: 0, borderColor: cA },
+          { label: 'B · ' + nomB(), data: g.map(p => ({ x: p.tau, y: p.hB })), borderWidth: 1.5, pointRadius: 0, borderColor: cB }
+        ]
+      },
+      options: options('altitude (m)'),
+      plugins: [pluginCurseurComp]
+    });
+  }
+
+  function dessinerCarteComparaison() {
+    const a = etat.analyse, b = etat.vol2.analyse;
+    const cA = css('--pilote-a'), cB = css('--pilote-b');
+    etat.couches.vol2.clearLayers();
+    etat.couches.planeurs.clearLayers();
+    etat.couches.selection.clearLayers();
+    etat.couches.temps.clearLayers();
+    const trace = (an) => {
+      const c = [];
+      for (let i = an.deco; i <= an.atterro; i++) c.push([an.points[i].lat, an.points[i].lon]);
+      return c;
+    };
+    L.polyline(trace(a), { color: cA, weight: 3, opacity: 0.9, interactive: false }).addTo(etat.couches.trace);
+    L.polyline(trace(b), { color: cB, weight: 3, opacity: 0.9, interactive: false }).addTo(etat.couches.vol2);
+    const planeur = (an, c, cl) => L.circleMarker([an.points[an.deco].lat, an.points[an.deco].lon], {
+      radius: 7, color: '#fff', weight: 2.5, fillColor: c, fillOpacity: 1
+    }).bindTooltip(cl.toUpperCase(), { permanent: true, direction: 'top', offset: [0, -8], className: 'etiquette-planeur ' + cl })
+      .addTo(etat.couches.planeurs);
+    etat.planeurA = planeur(a, cA, 'a');
+    etat.planeurB = planeur(b, cB, 'b');
+    $('#legende').innerHTML = `<span><i style="background:${cA}"></i>A · ${echapper(nomA())}</span>` +
+      `<span><i style="background:${cB}"></i>B · ${echapper(nomB())}</span>`;
+  }
+
+  function allerA(idx) {
+    if (!etat.comp) return;
+    etat.compIdx = idx;
+    $('#comp-temps').value = String(idx);
+    majCurseurComparaison();
+  }
+
+  function majCurseurComparaison() {
+    const r = etat.comp;
+    if (!r) return;
+    const p = r.grille[etat.compIdx];
+    const a = etat.analyse, b = etat.vol2.analyse;
+    $('#comp-lecture-txt').textContent = r.course
+      ? `Temps de course ${fmtDureeTab(Math.max(0, p.tau))}`
+      : `Heure ${fmtHeure(p.tau, true)}`;
+
+    const egal = Math.abs(p.comp) < 5;
+    const cote = p.comp >= 0 ? 'a' : 'b';
+    const brut = Math.abs(p.brut) < 5 ? 'à égalité' : `${nomDe(p.brut >= 0 ? 'a' : 'b')} +${fmtDuree(Math.abs(p.brut))}`;
+    const etatPilote = (cl, an, f, L, h, i, pr) => {
+      const phase = f <= 0 ? 'pas encore parti' : f >= 1 && pr.termine ? 'arrivé' : NOM_PHASE[an.phaseDe[i]];
+      return `<div class="comp-pil"><div class="t-lab"><span class="badge ${cl}" style="width:18px;height:18px;font-size:10px">${cl.toUpperCase()}</span>${echapper(nomDe(cl))}</div>
+        <div class="t-val">${nf(f * 100)} % · ${nf(f * L / 1000, 1)} km</div>
+        <div class="t-sous">${nf(h)} m · ${phase}${f > 0 && f < 1 ? ` · Vz ${signe(an.vz[i], 1)} m/s · ${nf(an.vit[i] * 3.6)} km/h` : ''}</div></div>`;
+    };
+    $('#comp-etat').innerHTML =
+      `<div class="comp-avance ${egal ? '' : cote}"><div class="t-sous">Avance compensée de l'altitude</div>
+        <div class="gros">${egal ? 'À égalité' : `${echapper(nomDe(cote))} +${fmtDuree(Math.abs(p.comp))}`}</div>
+        <div class="t-sous">Sans compensation : ${echapper(brut)}</div></div>` +
+      etatPilote('a', a, p.fA, r.prA.L, p.hA, p.iA, r.prA) +
+      etatPilote('b', b, p.fB, r.prB.L, p.hB, p.iB, r.prB);
+
+    if (etat.planeurA) {
+      etat.planeurA.setLatLng([a.points[p.iA].lat, a.points[p.iA].lon]).setTooltipContent(`A · ${nf(p.hA)} m`);
+      etat.planeurB.setLatLng([b.points[p.iB].lat, b.points[p.iB].lon]).setTooltipContent(`B · ${nf(p.hB)} m`);
+    }
+    if (!etat.redessinComp) {
+      etat.redessinComp = true;
+      requestAnimationFrame(() => {
+        etat.redessinComp = false;
+        if (etat.grapheAvance) etat.grapheAvance.draw();
+        if (etat.grapheAltComp) etat.grapheAltComp.draw();
+      });
+    }
+  }
+
+  function basculerLecture() {
+    if (etat.compLecture) { arreterLecture(); return; }
+    const r = etat.comp;
+    if (!r) return;
+    const n = r.grille.length - 1;
+    if (etat.compIdx >= n) etat.compIdx = 0;
+    const pas = Math.max(1, Math.round(n / 900)); // environ 35 s pour tout le vol
+    $('#comp-lecture').textContent = '❚❚';
+    $('#comp-lecture').setAttribute('aria-label', 'Mettre en pause');
+    etat.compLecture = setInterval(() => {
+      if (!etat.comp || etat.compIdx >= n) { arreterLecture(); return; }
+      allerA(Math.min(n, etat.compIdx + pas));
+    }, 40);
+  }
+
+  function arreterLecture() {
+    if (etat.compLecture) clearInterval(etat.compLecture);
+    etat.compLecture = null;
+    const b = $('#comp-lecture');
+    if (b) { b.textContent = '▶'; b.setAttribute('aria-label', 'Lire le vol'); }
+  }
+
+  function afficherBilan() {
+    const r = etat.comp, B = r.bilan;
+    if (etat.grapheDecomp) { etat.grapheDecomp.destroy(); etat.grapheDecomp = null; }
+    if (!B) {
+      $('#comp-resume').textContent = 'Pas assez de circuit fait en commun pour établir le bilan.';
+      $('#comp-explications').innerHTML = '';
+      return;
+    }
+    const cles = Object.keys(B.parts).sort((x, y) => Math.abs(B.parts[y]) - Math.abs(B.parts[x]));
+    const cA = css('--pilote-a'), cB = css('--pilote-b');
+
+    // Phrase de synthèse
+    const partiel = B.fc < 0.999;
+    let txt = partiel ? `Jusqu'à ${nf(B.fc * 100)} % du circuit (dernier point atteint par les deux)` : 'Sur le circuit complet';
+    txt += B.memeDistance
+      ? `, A met ${fmtDuree(B.mA.duree)} et B ${fmtDuree(B.mB.duree)}`
+      : `, à distance égale (${nf(B.Dref / 1000, 1)} km) : ${nf(B.vitesseA * 3.6, 1)} km/h pour A, ${nf(B.vitesseB * 3.6, 1)} km/h pour B`;
+    if (Math.abs(B.total) < 5) {
+      txt += '. <b>Égalité ou presque.</b>';
+    } else {
+      const gagnant = B.total > 0 ? 'a' : 'b';
+      const s = gagnant === 'a' ? 1 : -1;
+      const pour = cles.filter(c => s * B.parts[c] > 3).sort((x, y) => s * (B.parts[y] - B.parts[x]));
+      const contre = cles.filter(c => s * B.parts[c] < -3).sort((x, y) => s * (B.parts[x] - B.parts[y]));
+      txt += `. <b>${echapper(nomDe(gagnant))} gagne ${fmtDuree(Math.abs(B.total))}</b>`;
+      if (pour.length) txt += `, surtout grâce ${FACTEURS[pour[0]].grace} (${fmtDuree(Math.abs(B.parts[pour[0]]))})`;
+      if (contre.length) txt += `, mais perd ${fmtDuree(Math.abs(B.parts[contre[0]]))} ${FACTEURS[contre[0]].sur}`;
+      txt += '.';
+    }
+    $('#comp-resume').innerHTML = txt;
+
+    $('#comp-explications').innerHTML = cles.map(c => {
+      const v = B.parts[c];
+      const cl = Math.abs(v) < 3 ? 'nul' : v > 0 ? 'a' : 'b';
+      return `<li><span class="val ${cl}">${avantage(v)}</span>
+        <span><b>${FACTEURS[c].nom}</b><br><span class="discret">A : ${FACTEURS[c].detail(B.mA)}<br>B : ${FACTEURS[c].detail(B.mB)}</span></span></li>`;
+    }).join('');
+
+    etat.grapheDecomp = new Chart($('#graphe-decomp'), {
+      type: 'bar',
+      data: {
+        labels: cles.map(c => FACTEURS[c].nom),
+        datasets: [{
+          data: cles.map(c => B.parts[c] / 60),
+          backgroundColor: cles.map(c => (B.parts[c] >= 0 ? cA : cB)),
+          borderRadius: 4, maxBarThickness: 26
+        }]
+      },
+      options: {
+        indexAxis: 'y', animation: false, responsive: true, maintainAspectRatio: false,
+        scales: {
+          x: { grid: { color: css('--grille') }, title: { display: true, text: 'minutes gagnées · droite : A · gauche : B' } },
+          y: { grid: { display: false } }
+        },
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: { label: (c) => avantage(B.parts[cles[c.dataIndex]]) } }
+        }
+      }
+    });
+  }
+
+  function afficherTablesComparaison() {
+    const r = etat.comp, B = r.bilan;
+    const a = etat.analyse, b = etat.vol2.analyse;
+    const Z = zonesEffectives();
+    // Tableau pilote contre pilote : la meilleure valeur en gras
+    const ligne = (lab, vA, vB, fmt, mieux) => {
+      let mA = '', mB = '';
+      if (mieux && vA != null && vB != null && isFinite(vA) && isFinite(vB) && vA !== vB) {
+        const aMieux = mieux === 'haut' ? vA > vB : vA < vB;
+        mA = aMieux ? ' mieux' : '';
+        mB = aMieux ? '' : ' mieux';
+      }
+      return `<tr><td>${lab}</td><td class="a"><span class="${mA}">${fmt(vA)}</span></td><td class="b"><span class="${mB}">${fmt(vB)}</span></td></tr>`;
+    };
+    const finStr = (pr, an) => pr.termine ? fmtHeure(an.t[pr.iFin]) : `non terminé (${nf(pr.env[pr.iFin] * 100)} %)`;
+    let lignes = [
+      `<tr><td>Départ</td><td class="a">${fmtHeure(a.t[r.prA.iDep])} · ${nf(a.alt[r.prA.iDep])} m</td><td class="b">${fmtHeure(b.t[r.prB.iDep])} · ${nf(b.alt[r.prB.iDep])} m</td></tr>`,
+      `<tr><td>Arrivée</td><td class="a">${finStr(r.prA, a)}</td><td class="b">${finStr(r.prB, b)}</td></tr>`
+    ];
+    if (B) {
+      const pct = B.fc < 0.999 ? ` (jusqu'à ${nf(B.fc * 100)} %)` : '';
+      lignes = lignes.concat([
+        ligne('Temps' + pct, B.mA.duree, B.mB.duree, fmtDuree, B.memeDistance ? 'bas' : null),
+        ligne('Distance' + pct, B.mA.D, B.mB.D, v => `${nf(v / 1000, 1)} km`, null),
+        ligne('Vitesse', B.vitesseA * 3.6, B.vitesseB * 3.6, v => `${nf(v, 1)} km/h`, 'haut'),
+        ligne('Vz moyen en spirale', B.mA.vz, B.mB.vz, v => `${signe(v, 2)} m/s`, 'haut'),
+        ligne('Temps en spirale', B.mA.st.tempsT / B.mA.duree * 100, B.mB.st.tempsT / B.mB.duree * 100, v => `${nf(v)} %`, 'bas'),
+        ligne('Thermiques exploités', B.mA.nbTh, B.mB.nbTh, v => nf(v), null),
+        ligne('Vitesse en transition', B.mA.vg * 3.6, B.mB.vg * 3.6, v => `${nf(v)} km/h`, 'haut'),
+        ligne('Finesse en transition', B.mA.ld, B.mB.ld, v => fmtFinesse(v), 'haut'),
+        ligne('Cheminement', B.mA.k * 100, B.mB.k * 100, v => `${nf(v)} km / 100 km`, 'bas'),
+        ligne('Altitude en fin de portion', B.mA.st.hFin, B.mB.st.hFin, v => `${nf(v)} m`, null)
+      ]);
+    }
+    $('#table-comp').innerHTML =
+      `<thead><tr><th></th><th class="a">A · ${echapper(nomA())}</th><th class="b">B · ${echapper(nomB())}</th></tr></thead><tbody>${lignes.join('')}</tbody>`;
+
+    $('#table-comp-branches').innerHTML = r.branches.length
+      ? `<thead><tr><th>Branche</th><th>Temps A</th><th>Temps B</th><th>Vitesse A</th><th>Vitesse B</th><th>Vz A</th><th>Vz B</th><th>Plus rapide</th><th>Avance au point</th></tr></thead><tbody>` +
+        r.branches.map(x => `<tr>
+          <td>${echapper(Z[x.k - 1] ? Z[x.k - 1].nom : '')} → ${echapper(Z[x.k] ? Z[x.k].nom : '')}</td>
+          <td>${fmtDureeTab(x.durA)}</td><td>${fmtDureeTab(x.durB)}</td>
+          <td>${nf(x.vA * 3.6, 1)} km/h</td><td>${nf(x.vB * 3.6, 1)} km/h</td>
+          <td>${signe(x.vzA, 1)}</td><td>${signe(x.vzB, 1)}</td>
+          <td class="fort">${avantage(x.ecart)}</td><td>${avantage(x.avanceAuPoint)}</td></tr>`).join('') + '</tbody>'
+      : '<tbody><tr><td>Aucune branche faite par les deux pilotes.</td></tr></tbody>';
+  }
+
   function selectionnerBranche(k) {
     const a = etat.analyse, b = etat.resCircuit.branches[k];
     etat.selection = { type: 'B', k, s: b.s, e: b.e };
@@ -1092,6 +1515,27 @@
     }
     majBoutonsCalques();
   }));
+  // Comparaison
+  $('#fichier-b').addEventListener('change', (e) => { lireFichierB(e.target.files[0]); e.target.value = ''; });
+  $('#btn-changer-b').addEventListener('click', () => $('#fichier-b').click());
+  $('#btn-demo-b').addEventListener('click', () => chargerB(IGC.genererVolDemo({
+    graine: 11, pilote: 'Pilote B', immat: 'F-CBBB', concours: 'BB',
+    decalage: 420, vTransition: 40, zigzag: 20, bonusVz: -0.3
+  }), 'vol-demo-b.igc'));
+  $('#comp-alignement').addEventListener('change', (e) => {
+    etat.compAlignement = e.target.value;
+    etat.compIdx = null;
+    arreterLecture();
+    calculerComparaison();
+  });
+  $('#comp-mc').addEventListener('change', (e) => {
+    const v = parseFloat(String(e.target.value).replace(',', '.'));
+    if (v > 0) etat.compMc = v;
+    calculerComparaison();
+  });
+  $('#comp-temps').addEventListener('input', (e) => { arreterLecture(); allerA(+e.target.value); });
+  $('#comp-lecture').addEventListener('click', basculerLecture);
+
   $('#mc').addEventListener('change', (e) => {
     const v = parseFloat(String(e.target.value).replace(',', '.'));
     etat.mc = v > 0 ? v : null;
@@ -1132,6 +1576,8 @@
     compteurDrag = 0;
     voile.hidden = true;
     $('#zone-depot').classList.remove('survol');
-    lireFichier(e.dataTransfer.files[0]);
+    const f = e.dataTransfer.files[0];
+    if (etat.vue === 'comparaison' && etat.analyse) lireFichierB(f);
+    else lireFichier(f);
   });
 })();
