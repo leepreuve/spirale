@@ -15,6 +15,8 @@
     tempsMini: 3 * 3600,     // temps minimum AAT (s)
     dessin: false,           // ajout de points par clic sur la carte
     resCircuit: null,
+    typeCircuit: 'CT',       // type de circuit affiché en mode "Analyse de vol"
+    calques: { circuit: true, thermiques: true, transitions: true }, // affichage sur la carte
     mc: null,                // Vz de référence choisi (null = Vz moyen du vol)
     temps: null              // résultat gains / pertes de temps
   };
@@ -257,6 +259,7 @@
       etat.couches.trace = L.layerGroup().addTo(carte);
       etat.couches.selection = L.layerGroup().addTo(carte);
       etat.couches.circuit = L.layerGroup().addTo(carte);
+      etat.couches.transitions = L.layerGroup().addTo(carte);
       etat.couches.thermiques = L.layerGroup().addTo(carte);
       etat.couches.temps = L.layerGroup().addTo(carte);
       etat.couches.reperes = L.layerGroup().addTo(carte);
@@ -382,7 +385,7 @@
       const { ctx, chartArea: z, scales: { x } } = chart;
       // Passages de circuit (départ, zones, arrivée)
       const r = etat.resCircuit;
-      if (etat.vue !== 'analyse' && r && r.chemin.length) {
+      if (etat.calques.circuit && r && r.chemin.length) {
         ctx.save();
         ctx.strokeStyle = css('--circuit');
         ctx.fillStyle = css('--circuit');
@@ -606,24 +609,60 @@
     const a = etat.analyse;
     const g = etat.couches.thermiques;
     g.clearLayers();
-    const modeAnalyse = etat.vue === 'analyse';
+    if (!etat.calques.thermiques) return;
     a.thermiques.forEach((th, k) => {
       if (th.gain <= 0) return;
-      const m = L.circleMarker([th.centre.lat, th.centre.lon], {
-        radius: modeAnalyse ? Math.max(4, Math.min(10, 3 + th.vzMoy * 2)) : 4,
-        color: '#fff', weight: 1.5, fillColor: css('--thermique'), fillOpacity: modeAnalyse ? 0.95 : 0.7
-      });
-      if (modeAnalyse) {
-        m.bindTooltip(`${signe(th.vzMoy, 1)} <span>· ${nf(th.gain)} m</span>`, {
+      L.circleMarker([th.centre.lat, th.centre.lon], {
+        radius: Math.max(4, Math.min(10, 3 + th.vzMoy * 2)),
+        color: '#fff', weight: 1.5, fillColor: css('--thermique'), fillOpacity: 0.95
+      })
+        .bindTooltip(`${signe(th.vzMoy, 1)} <span>· ${nf(th.gain)} m</span>`, {
           permanent: true, direction: 'top', offset: [0, -6], className: 'etiquette-th'
-        });
-      } else {
-        m.bindTooltip(`<b>Thermique n°${k + 1}</b><br>${signe(th.vzMoy, 1)} m/s · +${nf(th.gain)} m<br>${fmtHeure(th.debut)} · ${fmtDureeTab(th.duree)}`);
-      }
-      m.on('click', () => { if (!etat.dessin) selectionner('T', k); });
-      m.addTo(g);
+        })
+        .on('click', () => { if (!etat.dessin) selectionner('T', k); })
+        .addTo(g);
     });
   }
+
+  // Transitions : étiquette au milieu de chaque transition (vitesse sol et finesse)
+  function dessinerTransitions() {
+    const a = etat.analyse;
+    const g = etat.couches.transitions;
+    g.clearLayers();
+    if (!etat.calques.transitions) return;
+    a.transitions.forEach((tr, k) => {
+      if (tr.dist < 2000 || tr.duree < 45) return; // on ignore les petits bouts de ligne droite
+      // Point situé à mi-distance de la transition
+      const moitie = a.cum[tr.s] + tr.dist / 2;
+      let i = tr.s;
+      while (i < tr.e && a.cum[i] < moitie) i++;
+      const p = a.points[i];
+      L.circleMarker([p.lat, p.lon], {
+        radius: 4, color: '#fff', weight: 1.5, fillColor: css('--transition'), fillOpacity: 1
+      })
+        .bindTooltip(`${nf(tr.vitesse * 3.6)} km/h <span>· f ${fmtFinesse(tr.finesse)}</span>`, {
+          permanent: true, direction: 'bottom', offset: [0, 6], className: 'etiquette-tr'
+        })
+        .on('click', () => { if (!etat.dessin) selectionner('G', k); })
+        .addTo(g);
+    });
+  }
+
+  function majBoutonsCalques() {
+    const sansCircuit = etat.circuit.length < 2;
+    document.querySelectorAll('[data-calque]').forEach(b => {
+      const actif = etat.calques[b.dataset.calque];
+      b.classList.toggle('actif', actif);
+      b.setAttribute('aria-pressed', String(actif));
+      if (b.dataset.calque === 'circuit') {
+        b.disabled = sansCircuit;
+        b.title = sansCircuit ? 'Aucun circuit : ouvrez « Circuit AAT » ou « Circuit CT » pour en dessiner un' : '';
+      }
+    });
+  }
+
+  // Type de circuit utilisé pour le calcul : celui du mode, ou en "Analyse de vol" le dernier choisi
+  function typeActif() { return etat.vue === 'analyse' ? etat.typeCircuit : etat.vue; }
 
   // ===================================================================
   // Mode : Analyse de vol / Circuit AAT / Circuit CT
@@ -637,9 +676,11 @@
       ? 'Circuit AAT — épreuve à zones'
       : 'Circuit CT — circuit à points de virage';
     if (v === 'analyse') basculerDessin(false);
+    else etat.typeCircuit = v;
     dessinerThermiques();
+    dessinerTransitions();
     majCircuit();
-    if (v !== 'analyse' && etat.circuit.length) cadrerCircuit();
+    if (etat.calques.circuit && etat.circuit.length >= 2) cadrerCircuit();
   }
 
   // Rayons par défaut (modifiables dans la liste)
@@ -652,7 +693,7 @@
   function nomAuto(k, n) {
     if (k === 0) return 'Départ';
     if (k === n - 1 && n > 1) return 'Arrivée';
-    return (etat.vue === 'AAT' ? 'Zone ' : 'PV ') + k;
+    return (typeActif() === 'AAT' ? 'Zone ' : 'PV ') + k;
   }
   function renommer() {
     const n = etat.circuit.length;
@@ -662,7 +703,7 @@
     const n = etat.circuit.length;
     return etat.circuit.map((p, k) => ({
       lat: p.lat, lon: p.lon, nom: p.nom || nomAuto(k, n),
-      rayon: p.rayon != null ? p.rayon : rayonDefaut(k, n, etat.vue),
+      rayon: p.rayon != null ? p.rayon : rayonDefaut(k, n, typeActif()),
       forme: (p.forme === 'ligne' && k > 0 && k < n - 1) ? 'cylindre' : (p.forme || 'cylindre'),
       demiAngle: p.demiAngle, rayon2: p.rayon2, demiAngle2: p.demiAngle2, style: p.style, a12: p.a12
     }));
@@ -673,6 +714,9 @@
     const c = (a && a.circuitIGC) || [];
     // On garde tout ce qui est déclaré : rayon propre à chaque zone, secteur, ligne…
     etat.circuit = c.map(p => Object.assign({}, p, { nomAuto: !p.nom, rayon: p.rayon != null ? p.rayon : null }));
+    // Type probable : AAT si un temps minimum est déclaré ou si une zone intermédiaire est large
+    const zoneLarge = c.slice(1, -1).some(p => p.rayon != null && p.rayon >= 5000);
+    etat.typeCircuit = (a && a.tempsCircuitIGC) || zoneLarge ? 'AAT' : 'CT';
     renommer();
     $('#btn-circuit-igc').hidden = !c.length;
     if (a && a.tempsCircuitIGC) {
@@ -742,18 +786,15 @@
   function majCircuit() {
     const a = etat.analyse;
     if (!a || !etat.carte) return;
-    if (etat.vue === 'analyse') {
-      etat.resCircuit = null;
-      etat.couches.circuit.clearLayers();
-      redessiner();
-      return;
-    }
     const Z = zonesEffectives();
-    etat.resCircuit = Z.length >= 2 ? IGC.analyserCircuit(a, Z, etat.vue, { tempsMini: etat.tempsMini }) : null;
-    afficherEditeurCircuit(Z);
+    etat.resCircuit = Z.length >= 2 ? IGC.analyserCircuit(a, Z, typeActif(), { tempsMini: etat.tempsMini }) : null;
+    if (etat.vue !== 'analyse') {
+      afficherEditeurCircuit(Z);
+      afficherResultatsCircuit();
+      majAide();
+    }
     dessinerCircuit(Z);
-    afficherResultatsCircuit();
-    majAide();
+    majBoutonsCalques();
     redessiner();
   }
 
@@ -791,7 +832,8 @@
   function dessinerCircuit(Z) {
     const g = etat.couches.circuit;
     g.clearLayers();
-    if (!Z.length) return;
+    if (!Z.length || !etat.calques.circuit) return;
+    const edition = etat.vue !== 'analyse';
     const coul = css('--circuit');
     const n = Z.length;
     const r0 = etat.resCircuit;
@@ -814,33 +856,47 @@
           .addTo(g);
       });
     }
-    if (n > 1) {
-      L.polyline(Z.map(z => [z.lat, z.lon]), { color: coul, weight: 2, opacity: 0.8, dashArray: '6 6', interactive: false }).addTo(g);
+    // Branches entre les centres, avec leur distance
+    const r = etat.resCircuit;
+    const aat = r && r.type === 'AAT';
+    for (let k = 1; k < n; k++) {
+      const a0 = Z[k - 1], a1 = Z[k];
+      L.polyline([[a0.lat, a0.lon], [a1.lat, a1.lon]], {
+        color: coul, weight: aat ? 2 : 3, opacity: aat ? 0.7 : 0.9, dashArray: aat ? '6 6' : null, interactive: false
+      }).addTo(g);
+      const d = IGC.distance(a0, a1);
+      L.circleMarker([(a0.lat + a1.lat) / 2, (a0.lon + a1.lon) / 2], { radius: 0, opacity: 0, fillOpacity: 0, interactive: false })
+        .bindTooltip(`${nf(d / 1000, 1)} km`, { permanent: true, direction: 'center', className: 'etiquette-branche' })
+        .addTo(g);
     }
     // Chemin optimisé AAT (points retenus dans les zones)
-    const r = etat.resCircuit;
-    if (r && r.type === 'AAT' && r.chemin.length > 1) {
+    if (aat && r.chemin.length > 1) {
       L.polyline(r.chemin.map(p => [p.lat, p.lon]), { color: coul, weight: 3, interactive: false }).addTo(g);
       r.chemin.slice(1, r.termine ? -1 : undefined).forEach(p => {
         L.circleMarker([p.lat, p.lon], { radius: 5, color: coul, weight: 2, fillColor: '#fff', fillOpacity: 1 })
           .bindTooltip(`Point retenu · ${fmtHeure(etat.analyse.t[p.i])}`).addTo(g);
       });
     }
-    // Repères déplaçables
+    // Repères des points (déplaçables dans les modes circuit), avec leur nom et leur statut
     Z.forEach((z, k) => {
       const v = r0 && r0.verification ? r0.verification[k] : null;
       const classe = v ? (v.ok ? ' ok' : ' ko') : '';
+      const statut = v ? (v.ok ? ` <span>✓ ${fmtHeure(v.t)}</span>` : ' <span>✗</span>') : '';
       const m = L.marker([z.lat, z.lon], {
-        draggable: true,
+        draggable: edition,
+        title: `${z.nom} · ${decrireZone(z)}`,
         icon: L.divIcon({ className: 'pv-icone' + classe, html: roleCourt(k, n), iconSize: [24, 24], iconAnchor: [12, 12] })
-      }).bindTooltip(`<b>${echapper(z.nom)}</b> · ${decrireZone(z)}` +
-        (v ? (v.ok ? `<br>✓ ${fmtHeure(v.t, true)} · ${nf(v.alt)} m` : '<br>✗ non validé') : '')).addTo(g);
-      m.on('dragend', (e) => {
-        const ll = e.target.getLatLng();
-        etat.circuit[k].lat = ll.lat;
-        etat.circuit[k].lon = ll.lng;
-        majCircuit();
-      });
+      }).bindTooltip(`${echapper(z.nom)}${statut}`, {
+        permanent: true, direction: 'right', offset: [12, 0], className: 'etiquette-pv' + classe
+      }).addTo(g);
+      if (edition) {
+        m.on('dragend', (e) => {
+          const ll = e.target.getLatLng();
+          etat.circuit[k].lat = ll.lat;
+          etat.circuit[k].lon = ll.lng;
+          majCircuit();
+        });
+      }
     });
   }
 
@@ -1024,6 +1080,18 @@
     renommer();
     majCircuit();
   });
+  document.querySelectorAll('[data-calque]').forEach(b => b.addEventListener('click', () => {
+    const c = b.dataset.calque;
+    etat.calques[c] = !etat.calques[c];
+    if (!etat.analyse) return;
+    if (c === 'thermiques') dessinerThermiques();
+    else if (c === 'transitions') dessinerTransitions();
+    else {
+      majCircuit();
+      if (etat.calques.circuit) cadrerCircuit();
+    }
+    majBoutonsCalques();
+  }));
   $('#mc').addEventListener('change', (e) => {
     const v = parseFloat(String(e.target.value).replace(',', '.'));
     etat.mc = v > 0 ? v : null;
