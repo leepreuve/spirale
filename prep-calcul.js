@@ -147,19 +147,16 @@ function calculer(C, P, zones, exclusions = []) {
   const pRef = quantile(probs, 0.98);
   // Autre option : on retire les points proches des trajets déjà trouvés (sauf autour des points du circuit)
   const exclu = fabriquerExclusion(exclusions, tache);
-  // parcs nationaux (cœurs) : mode 'interdit' (on n'y entre pas), 'survol' (au moins 1000 m/sol) ou 'ignore'
-  const parcs = (P.parcs && P.modeParcs !== 'ignore') ? P.parcs.filter(p => p.role === 'outer') : [];
-  const interdit = P.modeParcs === 'interdit';
-  const dansParc = (la, lo) => parcs.some(p => dansPolygone(la, lo, p.pts));
+  // cœurs de parcs nationaux : survol à 1000 m/sol minimum, sauf dans les cheminements autorisés
+  const parcs = P.parcs ? P.parcs.filter(p => p.role === 'outer') : [];
   for (const [la, lo, p] of D.kk7) {
-    if (interdit && dansParc(la, lo)) continue;
     lat.push(la); lon.push(lo); src.push(1);
     vz.push(P.vzMin + (vzMaxZ(la, lo) - P.vzMin) * Math.min(1, p / pRef));
     pAct.push(Math.min(1, p / pRef));
   }
-  for (const [la, lo] of D.fond) { if (interdit && dansParc(la, lo)) continue; lat.push(la); lon.push(lo); vz.push(P.vzFond); pAct.push(0.5); src.push(2); }
+  for (const [la, lo] of D.fond) { lat.push(la); lon.push(lo); vz.push(P.vzFond); pAct.push(0.5); src.push(2); }
   for (const [la, lo, s] of D.passage) {
-    if (s + marge < plafond(la, lo) && !(interdit && dansParc(la, lo))) { lat.push(la); lon.push(lo); vz.push(0); pAct.push(0); src.push(3); }
+    if (s + marge < plafond(la, lo)) { lat.push(la); lon.push(lo); vz.push(0); pAct.push(0); src.push(3); }
   }
   const NG = lat.length;
   let la0 = 0, lo0 = 0; for (let i = 0; i < NG; i++) { la0 += lat[i]; lo0 += lon[i]; } la0 /= NG; lo0 /= NG;
@@ -207,6 +204,32 @@ function calculer(C, P, zones, exclusions = []) {
     }
   }
   const margeParc = 1000;
+  // cheminements autorisés : altitude plancher dans le couloir (-1 = pas de couloir ici)
+  const CORR = new Float32Array(NX * NY).fill(-1);
+  const versGrille = (la, lo) => [((lo - lo0) * kx - GX0) / 100, ((la - la0) * ky - GY0) / 100];
+  const tamponner = (ci, cj, rCel, alt, filtre) => {
+    for (let i = Math.max(0, Math.floor(ci - rCel)); i <= Math.min(NY - 1, Math.ceil(ci + rCel)); i++)
+      for (let j = Math.max(0, Math.floor(cj - rCel)); j <= Math.min(NX - 1, Math.ceil(cj + rCel)); j++) {
+        const o = i * NX + j;
+        if (PARC[o] && filtre(i, j) && (CORR[o] < 0 || alt < CORR[o])) CORR[o] = alt;
+      }
+  };
+  for (const c of (P.couloirs || [])) {
+    if (c.type === 'disque') {
+      const [cj, ci] = versGrille(c.centre[0], c.centre[1]), rc = c.rayonKm * 10;
+      tamponner(ci, cj, rc, c.altMin, (i, j) => Math.hypot(i - ci, j - cj) <= rc);
+    } else {
+      const demi = c.largeurKm * 5;       // demi-largeur en cellules de 100 m
+      for (let k = 0; k < c.pts.length - 1; k++) {
+        const [aj, ai] = versGrille(c.pts[k][0], c.pts[k][1]), [bj, bi] = versGrille(c.pts[k + 1][0], c.pts[k + 1][1]);
+        const n = Math.ceil(Math.hypot(bi - ai, bj - aj) / 3) + 1;
+        for (let t = 0; t <= n; t++) {
+          const ci = ai + (bi - ai) * t / n, cj = aj + (bj - aj) * t / n;
+          tamponner(ci, cj, demi, c.altMin, (i, j) => distanceSegment(j, i, aj, ai, bj, bi) <= demi);
+        }
+      }
+    }
+  }
 
   // altitude requise au départ + gain de cheminement, pour une ligne (x0,y0) -> (x1,y1)
   const req = new Float64Array(NV), gain = new Float64Array(NV);
@@ -225,13 +248,15 @@ function calculer(C, P, zones, exclusions = []) {
       const Z = SOL[o] * w00 + SOL[o + 1] * w01 + SOL[o + NX] * w10 + SOL[o + NX + 1] * w11;
       const ph = PHI[o] * w00 + PHI[o + 1] * w01 + PHI[o + NX] * w10 + PHI[o + NX + 1] * w11;
       I += (phPrec + ph) / 2 * ds; phPrec = ph;
-      let m = approche > 0 ? mgFin + (mg - mgFin) * Math.min(1, (d - S) / approche) : (k === K ? mgFin : mg);
-      if (PARC[Math.round(fi) * NX + Math.round(fj)]) {          // cœur de parc national
-        if (interdit) { for (let iv = 0; iv < NV; iv++) { req[iv] = Infinity; gain[iv] = 0; } return d; }
-        if (m < margeParc) m = margeParc;
+      const m = approche > 0 ? mgFin + (mg - mgFin) * Math.min(1, (d - S) / approche) : (k === K ? mgFin : mg);
+      let hMinPt = Z + m;
+      const oP = Math.round(fi) * NX + Math.round(fj);
+      if (PARC[oP]) {                                  // cœur de parc national
+        if (CORR[oP] >= 0) hMinPt = Math.max(hMinPt, CORR[oP]);   // cheminement autorisé (≥ 2800 m aux Écrins)
+        else hMinPt = Math.max(hMinPt, Z + margeParc);            // ailleurs : 1000 m/sol minimum
       }
       for (let iv = 0; iv < NV; iv++) {
-        const r = Z + m + S / fins[iv] - effT * I / vites[iv];
+        const r = hMinPt + S / fins[iv] - effT * I / vites[iv];
         if (r > req[iv]) req[iv] = r;
       }
     }

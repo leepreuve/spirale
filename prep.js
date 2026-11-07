@@ -1,4 +1,4 @@
-// Spirale — Préparation V1.6 : trajet optimal d'un circuit (interface)
+// Spirale — Préparation V1.7 : trajet optimal d'un circuit (interface)
 // Le calcul tourne dans prep-calcul.js (Web Worker) pour ne pas figer la page.
 (() => {
   'use strict';
@@ -40,30 +40,31 @@
   };
   carte.setView([44.4, 6.2], 9);
 
-  // ----- cœurs de parcs nationaux (Écrins, Vanoise, Mercantour) — contours OpenStreetMap
+  // ----- cœurs de parcs nationaux (Écrins, Vanoise, Mercantour) et cheminements autorisés
   calques.parcs = L.layerGroup().addTo(carte);
-  etat.parcs = [];
-  fetch('prep/parcs.json').then(r => r.json()).then(p => { etat.parcs = p; dessinerParcs(); }).catch(() => {});
+  etat.parcs = []; etat.couloirs = [];
+  Promise.all([fetch('prep/parcs.json').then(r => r.json()), fetch('prep/couloirs.json').then(r => r.json())])
+    .then(([p, c]) => { etat.parcs = p; etat.couloirs = c; dessinerParcs(); }).catch(() => {});
   function dessinerParcs() {
     calques.parcs.clearLayers();
-    const mode = $('p-parcs').value;
-    if (mode === 'ignore') return;
-    const coul = mode === 'interdit' ? '#2b8a3e' : '#74b816';
     etat.parcs.filter(p => p.role === 'outer').forEach(p => {
-      L.polygon(p.pts, { renderer: rendZones, pane: 'zonesVol', interactive: false, color: coul, weight: 2, dashArray: mode === 'interdit' ? null : '6 4', fillColor: coul, fillOpacity: 0.18 }).addTo(calques.parcs);
+      L.polygon(p.pts, { renderer: rendZones, pane: 'zonesVol', interactive: false, color: '#2b8a3e', weight: 2, fillColor: '#2b8a3e', fillOpacity: 0.15 }).addTo(calques.parcs);
       let la = 0, lo = 0; p.pts.forEach(q => { la += q[0]; lo += q[1]; });
       L.marker([la / p.pts.length, lo / p.pts.length], { interactive: false, keyboard: false,
-        icon: L.divIcon({ className: 'etq-parc', html: `<span>${p.nom.replace('Parc national', 'PN')}<br><small>${mode === 'interdit' ? 'cœur interdit' : 'survol ≥ 1000 m/sol'}</small></span>`, iconSize: null }) }).addTo(calques.parcs);
+        icon: L.divIcon({ className: 'etq-parc', html: `<span>${p.nom.replace('Parc national', 'PN')}<br><small>cœur : 1000 m/sol mini</small></span>`, iconSize: null }) }).addTo(calques.parcs);
+    });
+    etat.couloirs.forEach(c => {
+      const bulle = `${c.nom} (${c.parc})<br>${c.altMin ? `cheminement autorisé à plus de ${c.altMin} m` : 'secteur autorisé sous 1000 m/sol'}`;
+      if (c.type === 'disque') L.circle(c.centre, { radius: c.rayonKm * 1000, color: '#e8590c', weight: 2, dashArray: '5 4', fillColor: '#e8590c', fillOpacity: 0.15 }).bindTooltip(bulle).addTo(calques.parcs);
+      else L.polyline(c.pts, { color: '#e8590c', weight: 7, opacity: 0.55, lineCap: 'round' }).bindTooltip(bulle).addTo(calques.parcs);
     });
   }
-  $('p-parcs').addEventListener('change', () => { dessinerParcs(); regl.parcs = $('p-parcs').value; ecrire('spirale-prep-reglages', regl); });
 
   // ----- réglages
   CIRCUITS.forEach(c => $('p-circuit').add(new Option(c.titre, c.id)));
   const lire = (k, def) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : def; } catch { return def; } };
   const ecrire = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* stockage indisponible */ } };
   const regl = lire('spirale-prep-reglages', {});
-  if (regl.parcs) $('p-parcs').value = regl.parcs;
   const curseurs = {
     marge: ['p-marge', 'o-marge', v => `${v} m`],
     mc: ['p-mc', 'o-mc', v => `${(+v).toFixed(1)} m/s`],
@@ -284,7 +285,7 @@
       P: {
         margeSol: +$('p-marge').value, mc: +$('p-mc').value, efficacite: +$('p-eff').value, rayon: +$('p-rayon').value,
         vzMin: 1.0, vzFond: 1.5, couloir: 15, portee: 20,
-        parcs: etat.parcs, modeParcs: $('p-parcs').value,
+        parcs: etat.parcs, couloirs: etat.couloirs,
       },
     });
   }
@@ -463,7 +464,7 @@
     };
     const lat = (x) => coord(x, 2, 'N', 'S'), lon = (x) => coord(x, 3, 'E', 'W');
     lignes.push('AXSPSPIRALE', `HFDTEDATE:${dd},01`, `HFPLTPILOTINCHARGE:Spirale option ${LETTRES[etat.vue]}`, 'HFGTYGLIDERTYPE:Diana 2',
-      'HFGIDGLIDERID:OPTIMAL', 'HFDTMGPSDATUM:WGS84', 'HFFTYFRTYPE:Spirale web V1.6');
+      'HFGIDGLIDERID:OPTIMAL', 'HFDTMGPSDATUM:WGS84', 'HFFTYFRTYPE:Spirale web V1.7');
     lignes.push(`C${dd}${hhmmss}${dd}0001${String(T.length - 2).padStart(2, '0')}Trajet optimal`);
     lignes.push(`C${lat(T[0].lat)}${lon(T[0].lon)}Takeoff`);
     T.forEach(t => lignes.push(`C${lat(t.lat)}${lon(t.lon)}${ascii(t.nom)}`));
