@@ -70,3 +70,15 @@
   .onglets a { padding: 6px 8px; }
   .barre .version { display: none; }
 }
+
+/* Options d'itinéraire A / B / C / D */
+.r-options { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.r-option {
+  border: 2px solid var(--c); border-radius: 8px; background: var(--surface); color: var(--texte);
+  padding: 4px 8px; font-size: 12px; cursor: pointer; font-variant-numeric: tabular-nums;
+}
+.r-option b { color: var(--c); }
+.r-option.actif { background: var(--c); color: #fff; }
+.r-option.actif b { color: #fff; }
+.r-option small { opacity: .8; }
+.etq-option span { display: inline-block; transform: translate(-50%, -50%); color: #fff; font-weight: 800; font-size: 12px; border-radius: 999px; padding: 1px 7px; box-shadow: 0 0 0 2px #fff; }

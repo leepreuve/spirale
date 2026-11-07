@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Spirale — préparation</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-  <link rel="stylesheet" href="style.css?v=20261107221451">
-  <link rel="stylesheet" href="prep.css?v=20261107221451">
-  <script src="acces.js?v=20261107221451"></script>
+  <link rel="stylesheet" href="style.css?v=20261107222320">
+  <link rel="stylesheet" href="prep.css?v=20261107222320">
+  <script src="acces.js?v=20261107222320"></script>
 </head>
 <body class="page-prep">
   <header class="barre">
@@ -19,7 +19,7 @@
     </a>
     <nav class="onglets" aria-label="Sections">
       <a href="index.html">Analyse</a>
-      <a href="preparation.html" class="actif" aria-current="page">Préparation <span class="pastille">V1.3</span></a>
+      <a href="preparation.html" class="actif" aria-current="page">Préparation <span class="pastille">V1.4</span></a>
     </nav>
     <p class="version" data-version></p>
   </header>
@@ -74,6 +74,7 @@
 
       <div class="prep-actions">
         <button id="p-calculer" class="btn principal" type="button">Calculer le trajet optimal</button>
+        <button id="p-autre" class="btn" type="button" disabled>Proposer une option B</button>
         <button id="p-igc" class="btn" type="button" disabled>Télécharger la trace IGC</button>
         <p id="p-etat" class="etat" role="status"></p>
       </div>
@@ -88,6 +89,7 @@
     <!-- Résultat -->
     <aside class="prep-resultat">
       <h2>Résultat sur le circuit</h2>
+      <div id="r-options" class="r-options"></div>
       <div id="r-temps" class="r-temps">—</div>
       <div id="r-vitesse" class="r-vitesse"></div>
       <div id="r-detail" class="r-detail"></div>
@@ -98,8 +100,8 @@
   </main>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="version.js?v=20261107221451"></script>
-  <script src="prep-zones.js?v=20261107221451"></script>
-  <script src="prep.js?v=20261107221451"></script>
+  <script src="version.js?v=20261107222320"></script>
+  <script src="prep-zones.js?v=20261107222320"></script>
+  <script src="prep.js?v=20261107222320"></script>
 </body>
 </html>

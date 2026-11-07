@@ -15,8 +15,9 @@ self.onmessage = (e) => {
       self.postMessage({ type: 'charge', id: C.id });
     } else if (m.type === 'calculer') {
       const t0 = performance.now();
-      const r = calculer(C, m.P, m.zones);
+      const r = calculer(C, m.P, m.zones, m.exclusions || []);
       r.dureeCalcul = (performance.now() - t0) / 1000;
+      r.id = C.id;
       self.postMessage({ type: 'resultat', r });
     }
   } catch (err) {
@@ -124,7 +125,7 @@ class Tas {
 }
 
 // ---------------------------------------------------------------- calcul complet
-function calculer(C, P, zones) {
+function calculer(C, P, zones, exclusions = []) {
   const D = C.D, rel = C.relief, tache = D.tache, M = tache.length;
   const plafond = melangeZones(zones, 'plafond'), vzMaxZ = melangeZones(zones, 'vzMax');
   const marge = P.margeSol, margeTh = P.margeSol, margePt = Math.min(100, P.margeSol);
@@ -139,14 +140,17 @@ function calculer(C, P, zones) {
   for (const t of tache) { lat.push(t.lat); lon.push(t.lon); vz.push(0); pAct.push(0); src.push(0); }
   const probs = D.kk7.map(r => r[2]);
   const pRef = quantile(probs, 0.98);
+  // Autre option : on retire les points proches des trajets déjà trouvés (sauf autour des points du circuit)
+  const exclu = fabriquerExclusion(exclusions, tache);
   for (const [la, lo, p] of D.kk7) {
+    if (exclu(la, lo)) continue;
     lat.push(la); lon.push(lo); src.push(1);
     vz.push(P.vzMin + (vzMaxZ(la, lo) - P.vzMin) * Math.min(1, p / pRef));
     pAct.push(Math.min(1, p / pRef));
   }
-  for (const [la, lo] of D.fond) { lat.push(la); lon.push(lo); vz.push(P.vzFond); pAct.push(0.5); src.push(2); }
+  for (const [la, lo] of D.fond) { if (exclu(la, lo)) continue; lat.push(la); lon.push(lo); vz.push(P.vzFond); pAct.push(0.5); src.push(2); }
   for (const [la, lo, s] of D.passage) {
-    if (s + marge < plafond(la, lo)) { lat.push(la); lon.push(lo); vz.push(0); pAct.push(0); src.push(3); }
+    if (s + marge < plafond(la, lo) && !exclu(la, lo)) { lat.push(la); lon.push(lo); vz.push(0); pAct.push(0); src.push(3); }
   }
   const NG = lat.length;
   let la0 = 0, lo0 = 0; for (let i = 0; i < NG; i++) { la0 += lat[i]; lo0 += lon[i]; } la0 /= NG; lo0 /= NG;
@@ -373,6 +377,26 @@ function calculer(C, P, zones) {
   let hmin = Infinity; for (let i = 0; i < nt; i++) if (tr.t[i] >= D.heureDepart) hmin = Math.min(hmin, tr.alt[i] - tr.sol[i]);
   out.hauteurMini = hmin;
   return out;
+}
+
+// exclusions : [{ pts: [[lat, lon], ...], rayonKm, protegeKm }] — vrai si (la, lo) est à moins de
+// rayonKm d'un trajet déjà trouvé et à plus de protegeKm de tous les points du circuit
+function fabriquerExclusion(exclusions, tache) {
+  if (!exclusions.length) return () => false;
+  const la0 = tache[0].lat, kx = 111.195 * Math.cos(la0 * Math.PI / 180), ky = 111.195;
+  const segs = [];
+  for (const ex of exclusions) {
+    for (let i = 0; i < ex.pts.length - 1; i++) {
+      segs.push([ex.pts[i][1] * kx, ex.pts[i][0] * ky, ex.pts[i + 1][1] * kx, ex.pts[i + 1][0] * ky, ex.rayonKm]);
+    }
+  }
+  const tp = tache.map(t => [t.lon * kx, t.lat * ky]), protege = exclusions[0].protegeKm;
+  return (la, lo) => {
+    const x = lo * kx, y = la * ky;
+    for (const [px, py] of tp) if (Math.hypot(px - x, py - y) < protege) return false;
+    for (const [ax, ay, bx, by, rk] of segs) if (distanceSegment(x, y, ax, ay, bx, by) < rk) return true;
+    return false;
+  };
 }
 
 function carteAscendance(xG, yG, vz, pAct, M, rayon) {

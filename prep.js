@@ -1,4 +1,4 @@
-// Spirale — Préparation V1.3 : trajet optimal d'un circuit (interface)
+// Spirale — Préparation V1.4 : trajet optimal d'un circuit (interface)
 // Le calcul tourne dans prep-calcul.js (Web Worker) pour ne pas figer la page.
 (() => {
   'use strict';
@@ -23,7 +23,7 @@
   // ----- worker (même numéro anti-cache que ce script)
   const vParam = (document.currentScript && document.currentScript.src.split('?')[1]) || '';
   const worker = new Worker('prep-calcul.js' + (vParam ? '?' + vParam : ''));
-  const etat = { D: null, zonesBase: [], zones: [], corrections: {}, sel: null, charge: null, resultat: null, calcul: false };
+  const etat = { D: null, zonesBase: [], zones: [], corrections: {}, sel: null, charge: null, resultat: null, calcul: false, options: [], vue: 0, mode: 'nouveau' };
 
   // ----- carte
   const carte = L.map('p-carte', { preferCanvas: true, zoomControl: true });
@@ -97,14 +97,15 @@
     dessinerZones(); afficherZoneSel();
   });
   $('p-circuit').addEventListener('change', () => chargerCircuit($('p-circuit').value));
-  $('p-calculer').addEventListener('click', calculer);
+  $('p-calculer').addEventListener('click', () => calculer('nouveau'));
+  $('p-autre').addEventListener('click', () => calculer('autre'));
   $('p-igc').addEventListener('click', telechargerIGC);
 
   // ----- chargement d'un circuit
   async function chargerCircuit(id) {
     etatTexte('Chargement du circuit…');
     $('p-calculer').disabled = true; $('p-igc').disabled = true;
-    etat.resultat = null; viderResultat();
+    etat.resultat = null; etat.options = []; etat.finOptions = false; etat.vue = 0; viderResultat(); majOptions();
     try {
       const [D, relief] = await Promise.all([
         fetch(`prep/${id}/donnees.json`).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }),
@@ -128,24 +129,70 @@
     if (m.type === 'charge') {
       etat.charge = m.id; $('p-calculer').disabled = false;
       etatTexte('Prêt. Règle les zones puis clique « Calculer ».');
-      if (!etat.premierCalcul) { etat.premierCalcul = true; calculer(); }
+      if (etat.calcul) etat.aRelancer = true; else calculer('nouveau');   // calcul automatique du trajet A
     } else if (m.type === 'progression') {
       etatTexte(m.texte);
     } else if (m.type === 'resultat') {
-      finCalcul(); etat.resultat = m.r; afficherResultat(m.r);
+      finCalcul();
+      if (!etat.D || m.r.id !== etat.D.id) {          // résultat d'un circuit qu'on vient de quitter
+        if (etat.aRelancer && etat.charge === (etat.D && etat.D.id)) { etat.aRelancer = false; calculer('nouveau'); }
+        return;
+      }
+      recevoir(m.r);
     } else if (m.type === 'erreur') {
       finCalcul(); etatTexte('Erreur de calcul : ' + m.message.split('\n')[0], true); console.error(m.message);
     }
   };
 
-  function calculer() {
+  // ----- options : A = trajet optimal ; B, C, D = meilleurs trajets en évitant les couloirs déjà trouvés
+  const LETTRES = 'ABCD', COULEURS = ['#111111', '#1f6feb', '#1e8c3a', '#d9730d'];
+  const pointsTrajet = (r) => { const p = [[r.etapes[0].lat1, r.etapes[0].lon1]]; r.etapes.forEach(e => { if (e.type === 'T') p.push([e.lat2, e.lon2]); }); return p; };
+  function recevoir(r) {
+    if (etat.mode === 'nouveau') {
+      etat.options = [r]; etat.vue = 0; etat.finOptions = false;
+      dessinerThermiques(r.thermiques);
+    } else if (r.ok) {
+      etat.options.push(r); etat.vue = etat.options.length - 1;
+    } else {
+      etat.finOptions = true; majOptions();
+      etatTexte(`Pas d'autre option possible en évitant les ${etat.options.length > 1 ? 'trajets' : 'le trajet'} déjà ${etat.options.length > 1 ? 'trouvés' : 'trouvé'} (relief ou plafond trop justes).`, true);
+      return;
+    }
+    afficherOption(etat.vue);
+  }
+  function afficherOption(i) {
+    etat.vue = i; etat.resultat = etat.options[i];
+    afficherResultat(etat.resultat);
+    dessinerTrajets(); majOptions();
+  }
+  function majOptions() {
+    const A = etat.options[0], box = $('r-options');
+    box.innerHTML = '';
+    if (etat.options.length > 1) {
+      etat.options.forEach((o, i) => {
+        const b = document.createElement('button');
+        b.type = 'button'; b.className = 'r-option' + (i === etat.vue ? ' actif' : '');
+        b.style.setProperty('--c', COULEURS[i]);
+        const ecart = i ? ` <small>${o.tempsTotal >= A.tempsTotal ? '+' : '−'}${hms(Math.abs(o.tempsTotal - A.tempsTotal))}</small>` : '';
+        b.innerHTML = `<b>Option ${LETTRES[i]}</b> ${hms(o.tempsTotal)}${ecart}`;
+        b.addEventListener('click', () => afficherOption(i));
+        box.appendChild(b);
+      });
+    }
+    $('p-autre').disabled = !(A && A.ok) || etat.options.length >= LETTRES.length || etat.calcul || !!etat.finOptions;
+    $('p-autre').textContent = etat.options.length >= 2 ? `Proposer une option ${LETTRES[etat.options.length] || ''}`.trim() : 'Proposer une option B';
+  }
+
+  function calculer(mode) {
     if (!etat.D || etat.charge !== etat.D.id || etat.calcul) return;
-    etat.calcul = true;
-    $('p-calculer').disabled = true; $('p-calculer').textContent = 'Calcul en cours…'; $('p-igc').disabled = true;
-    etatTexte('Calcul…');
+    etat.calcul = true; etat.mode = mode;
+    $('p-calculer').disabled = true; $('p-autre').disabled = true; $('p-igc').disabled = true;
+    (mode === 'nouveau' ? $('p-calculer') : $('p-autre')).textContent = 'Calcul en cours…';
+    etatTexte(mode === 'nouveau' ? 'Calcul…' : 'Recherche d\'un autre itinéraire…');
     worker.postMessage({
       type: 'calculer',
       zones: etat.zones,
+      exclusions: mode === 'autre' ? etat.options.filter(o => o.ok).map(o => ({ pts: pointsTrajet(o), rayonKm: 6, protegeKm: 8 })) : [],
       P: {
         margeSol: +$('p-marge').value, mc: +$('p-mc').value, efficacite: +$('p-eff').value, rayon: +$('p-rayon').value,
         vzMin: 1.0, vzFond: 1.5, couloir: 15, portee: 20,
@@ -154,6 +201,7 @@
   }
   function finCalcul() {
     etat.calcul = false; $('p-calculer').disabled = false; $('p-calculer').textContent = 'Calculer le trajet optimal';
+    majOptions();
   }
   function etatTexte(t, erreur) { $('p-etat').textContent = t; $('p-etat').classList.toggle('erreur', !!erreur); }
 
@@ -209,16 +257,24 @@
       else L.circleMarker([la, lo], { renderer: r, radius: 3, stroke: false, fillColor: couleurVz(vz, vmax), fillOpacity: 0.75, interactive: false }).addTo(calques.thermiques);
     });
   }
-  function dessinerTrajet(r) {
+  function dessinerTrajets() {
     calques.trajet.clearLayers();
-    if (!r.ok) return;
-    const pts = [[r.etapes[0].lat1, r.etapes[0].lon1]];
-    r.etapes.forEach(e => { if (e.type === 'T') pts.push([e.lat2, e.lon2]); });
+    // les autres options d'abord, en pointillés de leur couleur
+    etat.options.forEach((o, i) => {
+      if (i === etat.vue || !o.ok) return;
+      const p = pointsTrajet(o);
+      L.polyline(p, { color: COULEURS[i], weight: 2.5, opacity: 0.8, dashArray: '7 6', interactive: false }).addTo(calques.trajet);
+      const m = p[Math.floor(p.length / 2)];
+      L.marker(m, { icon: L.divIcon({ className: 'etq-option', html: `<span style="background:${COULEURS[i]}">${LETTRES[i]}</span>`, iconSize: null }), interactive: false }).addTo(calques.trajet);
+    });
+    const r = etat.options[etat.vue];
+    if (!r || !r.ok) return;
+    const pts = pointsTrajet(r), coul = COULEURS[etat.vue];
     L.polyline(pts, { color: '#fff', weight: 6, opacity: 0.9, interactive: false }).addTo(calques.trajet);
-    L.polyline(pts, { color: '#111', weight: 2.5, interactive: false }).addTo(calques.trajet);
+    L.polyline(pts, { color: coul, weight: 2.5, interactive: false }).addTo(calques.trajet);
     r.etapes.forEach(e => {
       if (e.type === 'T' && !e.valide && !e.passage && e.gain > 0.5) {
-        L.circleMarker([e.lat2, e.lon2], { radius: 2.5, color: '#111', weight: 0, fillColor: '#111', fillOpacity: 1 })
+        L.circleMarker([e.lat2, e.lon2], { radius: 2.5, color: coul, weight: 0, fillColor: coul, fillOpacity: 1 })
           .bindTooltip(`Traversé sans spiraler · +${Math.round(e.gain)} m`).addTo(calques.trajet);
       }
     });
@@ -237,10 +293,8 @@
     $('r-branches').innerHTML = ''; calques.trajet.clearLayers(); dessinerProfil(null);
   }
   function afficherResultat(r) {
-    dessinerThermiques(r.thermiques);
-    dessinerTrajet(r);
     if (!r.ok) {
-      viderResultat(); dessinerThermiques(r.thermiques);
+      viderResultat();
       $('r-temps').textContent = 'Impossible';
       $('r-detail').textContent = 'Aucun trajet ne passe avec ces réglages : remonte le plafond sur les reliefs (ou corrige la zone d’un col haut), ou baisse la marge.';
       etatTexte(`Calcul fait en ${r.dureeCalcul.toFixed(1)} s — aucun trajet possible.`, true);
@@ -326,8 +380,8 @@
       return String(d).padStart(deg, '0') + String(m).padStart(5, '0') + (x >= 0 ? pos : neg);
     };
     const lat = (x) => coord(x, 2, 'N', 'S'), lon = (x) => coord(x, 3, 'E', 'W');
-    lignes.push('AXSPSPIRALE', `HFDTEDATE:${dd},01`, 'HFPLTPILOTINCHARGE:Spirale trajet optimal', 'HFGTYGLIDERTYPE:Diana 2',
-      'HFGIDGLIDERID:OPTIMAL', 'HFDTMGPSDATUM:WGS84', 'HFFTYFRTYPE:Spirale web V1.3');
+    lignes.push('AXSPSPIRALE', `HFDTEDATE:${dd},01`, `HFPLTPILOTINCHARGE:Spirale option ${LETTRES[etat.vue]}`, 'HFGTYGLIDERTYPE:Diana 2',
+      'HFGIDGLIDERID:OPTIMAL', 'HFDTMGPSDATUM:WGS84', 'HFFTYFRTYPE:Spirale web V1.4');
     lignes.push(`C${dd}${hhmmss}${dd}0001${String(T.length - 2).padStart(2, '0')}Trajet optimal`);
     lignes.push(`C${lat(T[0].lat)}${lon(T[0].lon)}Takeoff`);
     T.forEach(t => lignes.push(`C${lat(t.lat)}${lon(t.lon)}${ascii(t.nom)}`));
@@ -347,7 +401,7 @@
     }
     const blob = new Blob([lignes.join('\r\n') + '\r\n'], { type: 'application/octet-stream' });
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob); a.download = `${D.id}_optimal.igc`;
+    a.href = URL.createObjectURL(blob); a.download = `${D.id}_option${LETTRES[etat.vue]}.igc`;
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   }
