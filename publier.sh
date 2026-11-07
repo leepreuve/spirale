@@ -8,7 +8,7 @@ MSG="${2:?message}"
 DATE=$(TZ=Europe/Paris date +%Y-%m-%dT%H:%M:%S%:z)
 V=$(date +%Y%m%d%H%M%S)
 printf "// Version du site, mise à jour à chaque publication\nwindow.SPIRALE_VERSION = { numero: '%s', date: '%s' };\n" "$NUM" "$DATE" > version.js
-sed -i -E "s#(style\.css|version\.js|analyse\.js|app\.js|prep\.css|prep\.js)\?v=[0-9]+#\1?v=$V#g" index.html preparation.html
+sed -i -E "s#(style\.css|version\.js|analyse\.js|app\.js|prep\.css|prep\.js|acces\.js)\?v=[0-9]+#\1?v=$V#g" index.html preparation.html
 git add -A
 git -c user.name="Leepreuve" -c user.email="Leepreuve@users.noreply.github.com" commit -q -m "$MSG
 
