@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Spirale — préparation</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-  <link rel="stylesheet" href="style.css?v=20261107222849">
-  <link rel="stylesheet" href="prep.css?v=20261107222849">
-  <script src="acces.js?v=20261107222849"></script>
+  <link rel="stylesheet" href="style.css?v=20261107224135">
+  <link rel="stylesheet" href="prep.css?v=20261107224135">
+  <script src="acces.js?v=20261107224135"></script>
 </head>
 <body class="page-prep">
   <header class="barre">
@@ -19,7 +19,7 @@
     </a>
     <nav class="onglets" aria-label="Sections">
       <a href="index.html">Analyse</a>
-      <a href="preparation.html" class="actif" aria-current="page">Préparation <span class="pastille">V1.5</span></a>
+      <a href="preparation.html" class="actif" aria-current="page">Préparation <span class="pastille">V1.6</span></a>
     </nav>
     <p class="version" data-version></p>
   </header>
@@ -59,6 +59,12 @@
         <h2>Vol</h2>
         <label class="curseur">Marge au-dessus du relief <output id="o-marge"></output>
           <input type="range" id="p-marge" min="50" max="400" step="10" value="150"></label>
+        <label class="choix">Cœurs de parcs nationaux (Écrins, Vanoise, Mercantour)
+          <select id="p-parcs">
+            <option value="interdit">Interdits (on n'y entre pas)</option>
+            <option value="survol">Survol autorisé à 1000 m/sol mini</option>
+            <option value="ignore">Ignorés</option>
+          </select></label>
         <label class="curseur">MacCready <output id="o-mc"></output>
           <input type="range" id="p-mc" min="0" max="4" step="0.1" value="2"></label>
       </section>
@@ -109,13 +115,13 @@
       <div id="r-detail" class="r-detail"></div>
       <div class="r-table"><table id="r-branches"></table></div>
       <p class="aide">Modèle théorique : thermiques kk7 (moyenne de nombreux vols), polaire Diana 2 provisoire, sans vent ni vol de pente.</p>
-      <p class="credits">Thermiques : <a href="https://thermal.kk7.ch" target="_blank" rel="noopener">thermal.kk7.ch</a> (M. von Känel, CC BY-NC-SA 4.0) · Relief : Mapzen Terrain Tiles · Carte : © OpenStreetMap, SRTM, style © OpenTopoMap (CC-BY-SA)</p>
+      <p class="credits">Thermiques : <a href="https://thermal.kk7.ch" target="_blank" rel="noopener">thermal.kk7.ch</a> (M. von Känel, CC BY-NC-SA 4.0) · Relief : Mapzen Terrain Tiles · Parcs : © OpenStreetMap · Carte : © OpenStreetMap, SRTM, style © OpenTopoMap (CC-BY-SA)</p>
     </aside>
   </main>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="version.js?v=20261107222849"></script>
-  <script src="prep-zones.js?v=20261107222849"></script>
-  <script src="prep.js?v=20261107222849"></script>
+  <script src="version.js?v=20261107224135"></script>
+  <script src="prep-zones.js?v=20261107224135"></script>
+  <script src="prep.js?v=20261107224135"></script>
 </body>
 </html>

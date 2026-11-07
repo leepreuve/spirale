@@ -1,4 +1,4 @@
-// Spirale — Préparation V1.5 : trajet optimal d'un circuit (interface)
+// Spirale — Préparation V1.6 : trajet optimal d'un circuit (interface)
 // Le calcul tourne dans prep-calcul.js (Web Worker) pour ne pas figer la page.
 (() => {
   'use strict';
@@ -40,11 +40,30 @@
   };
   carte.setView([44.4, 6.2], 9);
 
+  // ----- cœurs de parcs nationaux (Écrins, Vanoise, Mercantour) — contours OpenStreetMap
+  calques.parcs = L.layerGroup().addTo(carte);
+  etat.parcs = [];
+  fetch('prep/parcs.json').then(r => r.json()).then(p => { etat.parcs = p; dessinerParcs(); }).catch(() => {});
+  function dessinerParcs() {
+    calques.parcs.clearLayers();
+    const mode = $('p-parcs').value;
+    if (mode === 'ignore') return;
+    const coul = mode === 'interdit' ? '#2b8a3e' : '#74b816';
+    etat.parcs.filter(p => p.role === 'outer').forEach(p => {
+      L.polygon(p.pts, { renderer: rendZones, pane: 'zonesVol', interactive: false, color: coul, weight: 2, dashArray: mode === 'interdit' ? null : '6 4', fillColor: coul, fillOpacity: 0.18 }).addTo(calques.parcs);
+      let la = 0, lo = 0; p.pts.forEach(q => { la += q[0]; lo += q[1]; });
+      L.marker([la / p.pts.length, lo / p.pts.length], { interactive: false, keyboard: false,
+        icon: L.divIcon({ className: 'etq-parc', html: `<span>${p.nom.replace('Parc national', 'PN')}<br><small>${mode === 'interdit' ? 'cœur interdit' : 'survol ≥ 1000 m/sol'}</small></span>`, iconSize: null }) }).addTo(calques.parcs);
+    });
+  }
+  $('p-parcs').addEventListener('change', () => { dessinerParcs(); regl.parcs = $('p-parcs').value; ecrire('spirale-prep-reglages', regl); });
+
   // ----- réglages
   CIRCUITS.forEach(c => $('p-circuit').add(new Option(c.titre, c.id)));
   const lire = (k, def) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : def; } catch { return def; } };
   const ecrire = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* stockage indisponible */ } };
   const regl = lire('spirale-prep-reglages', {});
+  if (regl.parcs) $('p-parcs').value = regl.parcs;
   const curseurs = {
     marge: ['p-marge', 'o-marge', v => `${v} m`],
     mc: ['p-mc', 'o-mc', v => `${(+v).toFixed(1)} m/s`],
@@ -265,6 +284,7 @@
       P: {
         margeSol: +$('p-marge').value, mc: +$('p-mc').value, efficacite: +$('p-eff').value, rayon: +$('p-rayon').value,
         vzMin: 1.0, vzFond: 1.5, couloir: 15, portee: 20,
+        parcs: etat.parcs, modeParcs: $('p-parcs').value,
       },
     });
   }
@@ -373,7 +393,7 @@
     const tSpi = mo.reduce((a, e) => a + e.duree, 0), gSpi = mo.reduce((a, e) => a + e.h2 - e.h1, 0);
     $('r-temps').textContent = hms(r.tempsTotal);
     $('r-vitesse').textContent = `${(r.distanceCircuit / (r.tempsTotal / 3600)).toFixed(1)} km/h · ${r.distanceCircuit.toFixed(1)} km`;
-    $('r-detail').textContent = `Spirale ${Math.round(100 * tSpi / r.tempsTotal)} % du temps (${mo.length} spirales, ${(gSpi / Math.max(1, tSpi)).toFixed(1)} m/s) · cheminement +${Math.round(E.reduce((a, e) => a + e.gain, 0))} m · ${E.filter(e => e.passage).length} contournements · ${Math.round(r.hauteurMini)} m mini au-dessus du sol`;
+    $('r-detail').textContent = (r.couloirElargi ? 'Couloir élargi à 25 km pour trouver un passage · ' : '') + `Spirale ${Math.round(100 * tSpi / r.tempsTotal)} % du temps (${mo.length} spirales, ${(gSpi / Math.max(1, tSpi)).toFixed(1)} m/s) · cheminement +${Math.round(E.reduce((a, e) => a + e.gain, 0))} m · ${E.filter(e => e.passage).length} contournements · ${Math.round(r.hauteurMini)} m mini au-dessus du sol`;
     // tableau par branche
     const T = etat.D.tache, n = T.length - 1, br = tempsBranches(r);
     let html = '<thead><tr><th>Jusqu\'à</th><th>km</th><th>Temps</th><th>km/h</th><th>Spirale</th><th>Chem.</th><th>Alt.</th></tr></thead><tbody>';
@@ -443,7 +463,7 @@
     };
     const lat = (x) => coord(x, 2, 'N', 'S'), lon = (x) => coord(x, 3, 'E', 'W');
     lignes.push('AXSPSPIRALE', `HFDTEDATE:${dd},01`, `HFPLTPILOTINCHARGE:Spirale option ${LETTRES[etat.vue]}`, 'HFGTYGLIDERTYPE:Diana 2',
-      'HFGIDGLIDERID:OPTIMAL', 'HFDTMGPSDATUM:WGS84', 'HFFTYFRTYPE:Spirale web V1.5');
+      'HFGIDGLIDERID:OPTIMAL', 'HFDTMGPSDATUM:WGS84', 'HFFTYFRTYPE:Spirale web V1.6');
     lignes.push(`C${dd}${hhmmss}${dd}0001${String(T.length - 2).padStart(2, '0')}Trajet optimal`);
     lignes.push(`C${lat(T[0].lat)}${lon(T[0].lon)}Takeoff`);
     T.forEach(t => lignes.push(`C${lat(t.lat)}${lon(t.lon)}${ascii(t.nom)}`));

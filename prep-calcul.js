@@ -15,7 +15,12 @@ self.onmessage = (e) => {
       self.postMessage({ type: 'charge', id: C.id });
     } else if (m.type === 'calculer') {
       const t0 = performance.now();
-      const r = calculer(C, m.P, m.zones, m.exclusions || []);
+      let r = calculer(C, m.P, m.zones, m.exclusions || []);
+      if (!r.ok && m.P.couloir < 25) {          // pas de trajet : on élargit le couloir (contourner un parc, une vallée…)
+        progression('Aucun trajet dans le couloir de 15 km : élargissement à 25 km…');
+        r = calculer(C, { ...m.P, couloir: 25 }, m.zones, m.exclusions || []);
+        r.couloirElargi = true;
+      }
       r.dureeCalcul = (performance.now() - t0) / 1000;
       r.id = C.id;
       self.postMessage({ type: 'resultat', r });
@@ -142,14 +147,19 @@ function calculer(C, P, zones, exclusions = []) {
   const pRef = quantile(probs, 0.98);
   // Autre option : on retire les points proches des trajets déjà trouvés (sauf autour des points du circuit)
   const exclu = fabriquerExclusion(exclusions, tache);
+  // parcs nationaux (cœurs) : mode 'interdit' (on n'y entre pas), 'survol' (au moins 1000 m/sol) ou 'ignore'
+  const parcs = (P.parcs && P.modeParcs !== 'ignore') ? P.parcs.filter(p => p.role === 'outer') : [];
+  const interdit = P.modeParcs === 'interdit';
+  const dansParc = (la, lo) => parcs.some(p => dansPolygone(la, lo, p.pts));
   for (const [la, lo, p] of D.kk7) {
+    if (interdit && dansParc(la, lo)) continue;
     lat.push(la); lon.push(lo); src.push(1);
     vz.push(P.vzMin + (vzMaxZ(la, lo) - P.vzMin) * Math.min(1, p / pRef));
     pAct.push(Math.min(1, p / pRef));
   }
-  for (const [la, lo] of D.fond) { lat.push(la); lon.push(lo); vz.push(P.vzFond); pAct.push(0.5); src.push(2); }
+  for (const [la, lo] of D.fond) { if (interdit && dansParc(la, lo)) continue; lat.push(la); lon.push(lo); vz.push(P.vzFond); pAct.push(0.5); src.push(2); }
   for (const [la, lo, s] of D.passage) {
-    if (s + marge < plafond(la, lo)) { lat.push(la); lon.push(lo); vz.push(0); pAct.push(0); src.push(3); }
+    if (s + marge < plafond(la, lo) && !(interdit && dansParc(la, lo))) { lat.push(la); lon.push(lo); vz.push(0); pAct.push(0); src.push(3); }
   }
   const NG = lat.length;
   let la0 = 0, lo0 = 0; for (let i = 0; i < NG; i++) { la0 += lat[i]; lo0 += lon[i]; } la0 /= NG; lo0 /= NG;
@@ -179,6 +189,24 @@ function calculer(C, P, zones, exclusions = []) {
     SOL[i * gr.nx + j] = sol(rel, la0 + (gr.y0 + i * 100) / ky, lo0 + (gr.x0 + j * 100) / kx);
   }
   const PHI = gr.A, NX = gr.nx, NY = gr.ny, GX0 = gr.x0, GY0 = gr.y0;
+  // masque des parcs sur la même grille (balayage ligne par ligne)
+  const PARC = new Uint8Array(NX * NY);
+  for (const p of parcs) {
+    const xs = p.pts.map(q => ((q[1] - lo0) * kx - GX0) / 100), ys = p.pts.map(q => ((q[0] - la0) * ky - GY0) / 100);
+    for (let i = 0; i < NY; i++) {
+      const cuts = [];
+      for (let k = 0; k < xs.length - 1; k++) {
+        const ya = ys[k], yb = ys[k + 1];
+        if ((ya > i) !== (yb > i)) cuts.push(xs[k] + (i - ya) / (yb - ya) * (xs[k + 1] - xs[k]));
+      }
+      cuts.sort((a, b) => a - b);
+      for (let c = 0; c + 1 < cuts.length; c += 2) {
+        const j0 = Math.max(0, Math.ceil(cuts[c])), j1 = Math.min(NX - 1, Math.floor(cuts[c + 1]));
+        for (let j = j0; j <= j1; j++) PARC[i * NX + j] = 1;
+      }
+    }
+  }
+  const margeParc = 1000;
 
   // altitude requise au départ + gain de cheminement, pour une ligne (x0,y0) -> (x1,y1)
   const req = new Float64Array(NV), gain = new Float64Array(NV);
@@ -197,7 +225,11 @@ function calculer(C, P, zones, exclusions = []) {
       const Z = SOL[o] * w00 + SOL[o + 1] * w01 + SOL[o + NX] * w10 + SOL[o + NX + 1] * w11;
       const ph = PHI[o] * w00 + PHI[o + 1] * w01 + PHI[o + NX] * w10 + PHI[o + NX + 1] * w11;
       I += (phPrec + ph) / 2 * ds; phPrec = ph;
-      const m = approche > 0 ? mgFin + (mg - mgFin) * Math.min(1, (d - S) / approche) : (k === K ? mgFin : mg);
+      let m = approche > 0 ? mgFin + (mg - mgFin) * Math.min(1, (d - S) / approche) : (k === K ? mgFin : mg);
+      if (PARC[Math.round(fi) * NX + Math.round(fj)]) {          // cœur de parc national
+        if (interdit) { for (let iv = 0; iv < NV; iv++) { req[iv] = Infinity; gain[iv] = 0; } return d; }
+        if (m < margeParc) m = margeParc;
+      }
       for (let iv = 0; iv < NV; iv++) {
         const r = Z + m + S / fins[iv] - effT * I / vites[iv];
         if (r > req[iv]) req[iv] = r;
@@ -376,6 +408,15 @@ function calculer(C, P, zones, exclusions = []) {
   let hmin = Infinity; for (let i = 0; i < nt; i++) if (tr.t[i] >= D.heureDepart) hmin = Math.min(hmin, tr.alt[i] - tr.sol[i]);
   out.hauteurMini = hmin;
   return out;
+}
+
+function dansPolygone(la, lo, pts) {
+  let c = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const a = pts[i], b = pts[j];
+    if ((a[0] > la) !== (b[0] > la) && lo < (b[1] - a[1]) * (la - a[0]) / (b[0] - a[0]) + a[1]) c = !c;
+  }
+  return c;
 }
 
 // exclusions : [{ pts: [[lat, lon], ...], rayonKm, protegeKm, branche }] — vrai si (la, lo) est à moins de
