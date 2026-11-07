@@ -1,4 +1,4 @@
-// Spirale — Préparation V1.4 : trajet optimal d'un circuit (interface)
+// Spirale — Préparation V1.5 : trajet optimal d'un circuit (interface)
 // Le calcul tourne dans prep-calcul.js (Web Worker) pour ne pas figer la page.
 (() => {
   'use strict';
@@ -115,7 +115,7 @@
       etat.zonesBase = genererZonesVol(D, relief);
       etat.corrections = lire('spirale-prep-corr-' + id, {}) || {};
       etat.sel = null;
-      majZones();
+      majZones(); remplirBranches();
       dessinerCircuit(); dessinerThermiquesBruts();
       carte.fitBounds([[D.zone.latMin, D.zone.lonMin], [D.zone.latMax, D.zone.lonMax]], { padding: [10, 10] });
       worker.postMessage({ type: 'charger', D, relief }, [relief]);
@@ -145,17 +145,43 @@
   };
 
   // ----- options : A = trajet optimal ; B, C, D = meilleurs trajets en évitant les couloirs déjà trouvés
-  const LETTRES = 'ABCD', COULEURS = ['#111111', '#1f6feb', '#1e8c3a', '#d9730d'];
+  const LETTRES = 'ABCDEF', COULEURS = ['#111111', '#1f6feb', '#1e8c3a', '#d9730d', '#9c36b5', '#c2255c'];
   const pointsTrajet = (r) => { const p = [[r.etapes[0].lat1, r.etapes[0].lon1]]; r.etapes.forEach(e => { if (e.type === 'T') p.push([e.lat2, e.lon2]); }); return p; };
+  function pointsParBranche(r) {      // le trajet découpé entre deux points du circuit validés
+    const br = []; let cur = [[r.etapes[0].lat1, r.etapes[0].lon1]];
+    r.etapes.forEach(e => {
+      if (e.type !== 'T') return;
+      cur.push([e.lat2, e.lon2]);
+      if (e.valide) { br.push(cur); cur = [[e.lat2, e.lon2]]; }
+    });
+    return br;
+  }
+  function tempsBranches(r) {         // temps, spirale, cheminement et altitude par branche
+    const br = []; let cur = { t: 0, spi: 0, gain: 0, h: null };
+    for (const e of r.etapes) {
+      cur.t += e.duree; if (e.type === 'M') cur.spi += e.duree; cur.gain += e.gain;
+      if (e.valide) { cur.h = e.h2; br.push(cur); cur = { t: 0, spi: 0, gain: 0, h: null }; }
+    }
+    return br;
+  }
+  const nomCourt = (t) => t.nom.replace(/^(Départ|Arrivée) /, '');
+  function remplirBranches() {
+    const T = etat.D.tache, sel = $('p-branche');
+    sel.innerHTML = '';
+    sel.add(new Option('Tout le circuit', '-1'));
+    for (let i = 0; i < T.length - 1; i++) sel.add(new Option(`${nomCourt(T[i])} → ${nomCourt(T[i + 1])}`, String(i)));
+  }
   function recevoir(r) {
     if (etat.mode === 'nouveau') {
+      r.variante = 'Optimal';
       etat.options = [r]; etat.vue = 0; etat.finOptions = false;
       dessinerThermiques(r.thermiques);
     } else if (r.ok) {
+      r.variante = etat.varianteDemandee;
       etat.options.push(r); etat.vue = etat.options.length - 1;
     } else {
       etat.finOptions = true; majOptions();
-      etatTexte(`Pas d'autre option possible en évitant les ${etat.options.length > 1 ? 'trajets' : 'le trajet'} déjà ${etat.options.length > 1 ? 'trouvés' : 'trouvé'} (relief ou plafond trop justes).`, true);
+      etatTexte(`Pas d'autre itinéraire possible pour « ${etat.varianteDemandee} » en évitant les options déjà trouvées (relief ou plafond trop justes). Essaie une autre branche.`, true);
       return;
     }
     afficherOption(etat.vue);
@@ -166,23 +192,66 @@
     dessinerTrajets(); majOptions();
   }
   function majOptions() {
-    const A = etat.options[0], box = $('r-options');
+    const A = etat.options[0], box = $('r-options'), n = etat.options.length;
     box.innerHTML = '';
-    if (etat.options.length > 1) {
+    $('r-nav').hidden = n < 2;
+    if (n > 1) {
       etat.options.forEach((o, i) => {
         const b = document.createElement('button');
         b.type = 'button'; b.className = 'r-option' + (i === etat.vue ? ' actif' : '');
         b.style.setProperty('--c', COULEURS[i]);
-        const ecart = i ? ` <small>${o.tempsTotal >= A.tempsTotal ? '+' : '−'}${hms(Math.abs(o.tempsTotal - A.tempsTotal))}</small>` : '';
-        b.innerHTML = `<b>Option ${LETTRES[i]}</b> ${hms(o.tempsTotal)}${ecart}`;
+        b.innerHTML = `<b>${LETTRES[i]}</b> ${hms(o.tempsTotal)}`;
+        b.title = `Option ${LETTRES[i]} — ${o.variante}`;
         b.addEventListener('click', () => afficherOption(i));
         box.appendChild(b);
       });
+      $('r-prec').disabled = etat.vue === 0; $('r-suiv').disabled = etat.vue === n - 1;
+      $('r-vue').textContent = `Option ${LETTRES[etat.vue]} · ${etat.options[etat.vue].variante}` +
+        (etat.vue ? ` · ${etat.options[etat.vue].tempsTotal >= A.tempsTotal ? '+' : '−'}${hms(Math.abs(etat.options[etat.vue].tempsTotal - A.tempsTotal))} sur A` : '');
     }
-    $('p-autre').disabled = !(A && A.ok) || etat.options.length >= LETTRES.length || etat.calcul || !!etat.finOptions;
-    $('p-autre').textContent = etat.options.length >= 2 ? `Proposer une option ${LETTRES[etat.options.length] || ''}`.trim() : 'Proposer une option B';
+    majComparaison();
+    $('p-autre').disabled = !(A && A.ok) || n >= LETTRES.length || etat.calcul || !!etat.finOptions;
+    $('p-autre').textContent = `Proposer une option ${LETTRES[n] || ''}`.trim();
   }
+  function majComparaison() {
+    const tab = $('r-comparaison'), n = etat.options.length, bloc = $('r-comparaison-bloc');
+    if (bloc.hidden !== (n < 2)) {                       // la carte change de taille
+      bloc.hidden = n < 2;
+      requestAnimationFrame(() => { carte.invalidateSize(); dessinerProfil(etat.resultat); });
+    }
+    if (n < 2) { tab.innerHTML = ''; return; }
+    const T = etat.D.tache, nb = T.length - 1, A = etat.options[0];
+    const tb = etat.options.map(tempsBranches);
+    const mini = [];
+    for (let k = 0; k < nb; k++) mini.push(Math.min(...tb.map(b => b[k] ? b[k].t : Infinity)));
+    const tMin = Math.min(...etat.options.map(o => o.tempsTotal));
+    let h = '<thead><tr><th>Option</th><th>Variante</th><th>Temps</th><th>km/h</th><th>Écart</th>';
+    for (let k = 0; k < nb; k++) h += `<th title="${nomCourt(T[k])} → ${nomCourt(T[k + 1])}">→ ${nomCourt(T[k + 1]).replace(/^P(\d+).*/, 'P$1')}</th>`;
+    h += '</tr></thead><tbody>';
+    etat.options.forEach((o, i) => {
+      const d = o.tempsTotal - A.tempsTotal;
+      h += `<tr class="${i === etat.vue ? 'actif' : ''}" data-i="${i}"><td><span class="pastille-opt" style="background:${COULEURS[i]}">${LETTRES[i]}</span></td>`;
+      h += `<td>${o.variante}</td><td${o.tempsTotal === tMin ? ' class="meilleur"' : ''}>${hms(o.tempsTotal)}</td>`;
+      h += `<td>${(o.distanceCircuit / (o.tempsTotal / 3600)).toFixed(1)}</td><td>${i ? (d >= 0 ? '+' : '−') + hms(Math.abs(d)) : '—'}</td>`;
+      for (let k = 0; k < nb; k++) {
+        const x = tb[i][k];
+        h += x ? `<td${x.t === mini[k] ? ' class="meilleur"' : ''}>${hms(x.t)}<br><small>${Math.round(distKm(T[k], T[k + 1]) / (x.t / 3600))} km/h</small></td>` : '<td>—</td>';
+      }
+      h += '</tr>';
+    });
+    tab.innerHTML = h + '</tbody>';
+    tab.querySelectorAll('tbody tr').forEach(tr => tr.addEventListener('click', () => afficherOption(+tr.dataset.i)));
+  }
+  $('r-prec').addEventListener('click', () => { if (etat.vue > 0) afficherOption(etat.vue - 1); });
+  $('r-suiv').addEventListener('click', () => { if (etat.vue < etat.options.length - 1) afficherOption(etat.vue + 1); });
+  $('p-branche').addEventListener('change', () => { etat.finOptions = false; majOptions(); });
 
+  function exclusionsPour(b) {
+    etat.varianteDemandee = b < 0 ? 'Tout le circuit' : $('p-branche').selectedOptions[0].textContent;
+    return etat.options.filter(o => o.ok).map(o => ({
+      pts: b < 0 ? pointsTrajet(o) : (pointsParBranche(o)[b] || []), rayonKm: 6, protegeKm: 8, branche: b,
+    })).filter(e => e.pts.length > 1);
+  }
   function calculer(mode) {
     if (!etat.D || etat.charge !== etat.D.id || etat.calcul) return;
     etat.calcul = true; etat.mode = mode;
@@ -192,7 +261,7 @@
     worker.postMessage({
       type: 'calculer',
       zones: etat.zones,
-      exclusions: mode === 'autre' ? etat.options.filter(o => o.ok).map(o => ({ pts: pointsTrajet(o), rayonKm: 6, protegeKm: 8 })) : [],
+      exclusions: mode === 'autre' ? exclusionsPour(+$('p-branche').value) : [],
       P: {
         margeSol: +$('p-marge').value, mc: +$('p-mc').value, efficacite: +$('p-eff').value, rayon: +$('p-rayon').value,
         vzMin: 1.0, vzFond: 1.5, couloir: 15, portee: 20,
@@ -306,14 +375,7 @@
     $('r-vitesse').textContent = `${(r.distanceCircuit / (r.tempsTotal / 3600)).toFixed(1)} km/h · ${r.distanceCircuit.toFixed(1)} km`;
     $('r-detail').textContent = `Spirale ${Math.round(100 * tSpi / r.tempsTotal)} % du temps (${mo.length} spirales, ${(gSpi / Math.max(1, tSpi)).toFixed(1)} m/s) · cheminement +${Math.round(E.reduce((a, e) => a + e.gain, 0))} m · ${E.filter(e => e.passage).length} contournements · ${Math.round(r.hauteurMini)} m mini au-dessus du sol`;
     // tableau par branche
-    const T = etat.D.tache, n = T.length - 1, br = [];
-    let tc = 0;
-    const acc = () => ({ t: 0, spi: 0, gain: 0, h: null });
-    let cur = acc();
-    for (const e of E) {
-      cur.t += e.duree; tc += e.duree; if (e.type === 'M') cur.spi += e.duree; cur.gain += e.gain;
-      if (e.valide) { cur.h = e.h2; cur.fin = tc; br.push(cur); cur = acc(); }
-    }
+    const T = etat.D.tache, n = T.length - 1, br = tempsBranches(r);
     let html = '<thead><tr><th>Jusqu\'à</th><th>km</th><th>Temps</th><th>km/h</th><th>Spirale</th><th>Chem.</th><th>Alt.</th></tr></thead><tbody>';
     for (let i = 0; i < Math.min(n, br.length); i++) {
       const d = distKm(T[i], T[i + 1]), x = br[i];
@@ -381,7 +443,7 @@
     };
     const lat = (x) => coord(x, 2, 'N', 'S'), lon = (x) => coord(x, 3, 'E', 'W');
     lignes.push('AXSPSPIRALE', `HFDTEDATE:${dd},01`, `HFPLTPILOTINCHARGE:Spirale option ${LETTRES[etat.vue]}`, 'HFGTYGLIDERTYPE:Diana 2',
-      'HFGIDGLIDERID:OPTIMAL', 'HFDTMGPSDATUM:WGS84', 'HFFTYFRTYPE:Spirale web V1.4');
+      'HFGIDGLIDERID:OPTIMAL', 'HFDTMGPSDATUM:WGS84', 'HFFTYFRTYPE:Spirale web V1.5');
     lignes.push(`C${dd}${hhmmss}${dd}0001${String(T.length - 2).padStart(2, '0')}Trajet optimal`);
     lignes.push(`C${lat(T[0].lat)}${lon(T[0].lon)}Takeoff`);
     T.forEach(t => lignes.push(`C${lat(t.lat)}${lon(t.lon)}${ascii(t.nom)}`));

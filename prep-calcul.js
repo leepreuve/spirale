@@ -143,14 +143,13 @@ function calculer(C, P, zones, exclusions = []) {
   // Autre option : on retire les points proches des trajets déjà trouvés (sauf autour des points du circuit)
   const exclu = fabriquerExclusion(exclusions, tache);
   for (const [la, lo, p] of D.kk7) {
-    if (exclu(la, lo)) continue;
     lat.push(la); lon.push(lo); src.push(1);
     vz.push(P.vzMin + (vzMaxZ(la, lo) - P.vzMin) * Math.min(1, p / pRef));
     pAct.push(Math.min(1, p / pRef));
   }
-  for (const [la, lo] of D.fond) { if (exclu(la, lo)) continue; lat.push(la); lon.push(lo); vz.push(P.vzFond); pAct.push(0.5); src.push(2); }
+  for (const [la, lo] of D.fond) { lat.push(la); lon.push(lo); vz.push(P.vzFond); pAct.push(0.5); src.push(2); }
   for (const [la, lo, s] of D.passage) {
-    if (s + marge < plafond(la, lo) && !exclu(la, lo)) { lat.push(la); lon.push(lo); vz.push(0); pAct.push(0); src.push(3); }
+    if (s + marge < plafond(la, lo)) { lat.push(la); lon.push(lo); vz.push(0); pAct.push(0); src.push(3); }
   }
   const NG = lat.length;
   let la0 = 0, lo0 = 0; for (let i = 0; i < NG; i++) { la0 += lat[i]; lo0 += lon[i]; } la0 /= NG; lo0 /= NG;
@@ -213,7 +212,7 @@ function calculer(C, P, zones, exclusions = []) {
   for (let L = 0; L < nC; L++) {
     const a = [L];
     for (let i = M; i < NG; i++) {
-      if (distanceSegment(xG[i], yG[i], xG[L], yG[L], xG[L + 1], yG[L + 1]) <= P.couloir * 1000) a.push(i);
+      if (distanceSegment(xG[i], yG[i], xG[L], yG[L], xG[L + 1], yG[L + 1]) <= P.couloir * 1000 && !exclu(lat[i], lon[i], L)) a.push(i);
     }
     loc.push(Int32Array.from(a));
   }
@@ -379,22 +378,23 @@ function calculer(C, P, zones, exclusions = []) {
   return out;
 }
 
-// exclusions : [{ pts: [[lat, lon], ...], rayonKm, protegeKm }] — vrai si (la, lo) est à moins de
-// rayonKm d'un trajet déjà trouvé et à plus de protegeKm de tous les points du circuit
+// exclusions : [{ pts: [[lat, lon], ...], rayonKm, protegeKm, branche }] — vrai si (la, lo) est à moins de
+// rayonKm d'un trajet déjà trouvé et à plus de protegeKm de tous les points du circuit.
+// branche = numéro de la branche concernée (-1 = tout le circuit)
 function fabriquerExclusion(exclusions, tache) {
   if (!exclusions.length) return () => false;
   const la0 = tache[0].lat, kx = 111.195 * Math.cos(la0 * Math.PI / 180), ky = 111.195;
   const segs = [];
   for (const ex of exclusions) {
     for (let i = 0; i < ex.pts.length - 1; i++) {
-      segs.push([ex.pts[i][1] * kx, ex.pts[i][0] * ky, ex.pts[i + 1][1] * kx, ex.pts[i + 1][0] * ky, ex.rayonKm]);
+      segs.push([ex.pts[i][1] * kx, ex.pts[i][0] * ky, ex.pts[i + 1][1] * kx, ex.pts[i + 1][0] * ky, ex.rayonKm, ex.branche == null ? -1 : ex.branche]);
     }
   }
   const tp = tache.map(t => [t.lon * kx, t.lat * ky]), protege = exclusions[0].protegeKm;
-  return (la, lo) => {
+  return (la, lo, L) => {
     const x = lo * kx, y = la * ky;
     for (const [px, py] of tp) if (Math.hypot(px - x, py - y) < protege) return false;
-    for (const [ax, ay, bx, by, rk] of segs) if (distanceSegment(x, y, ax, ay, bx, by) < rk) return true;
+    for (const [ax, ay, bx, by, rk, br] of segs) if ((br < 0 || br === L) && distanceSegment(x, y, ax, ay, bx, by) < rk) return true;
     return false;
   };
 }

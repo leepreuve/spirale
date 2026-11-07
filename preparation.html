@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Spirale — préparation</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-  <link rel="stylesheet" href="style.css?v=20261107222320">
-  <link rel="stylesheet" href="prep.css?v=20261107222320">
-  <script src="acces.js?v=20261107222320"></script>
+  <link rel="stylesheet" href="style.css?v=20261107222849">
+  <link rel="stylesheet" href="prep.css?v=20261107222849">
+  <script src="acces.js?v=20261107222849"></script>
 </head>
 <body class="page-prep">
   <header class="barre">
@@ -19,7 +19,7 @@
     </a>
     <nav class="onglets" aria-label="Sections">
       <a href="index.html">Analyse</a>
-      <a href="preparation.html" class="actif" aria-current="page">Préparation <span class="pastille">V1.4</span></a>
+      <a href="preparation.html" class="actif" aria-current="page">Préparation <span class="pastille">V1.5</span></a>
     </nav>
     <p class="version" data-version></p>
   </header>
@@ -74,6 +74,8 @@
 
       <div class="prep-actions">
         <button id="p-calculer" class="btn principal" type="button">Calculer le trajet optimal</button>
+        <label class="choix">Option sur
+          <select id="p-branche" aria-label="Partie du circuit à faire varier"></select></label>
         <button id="p-autre" class="btn" type="button" disabled>Proposer une option B</button>
         <button id="p-igc" class="btn" type="button" disabled>Télécharger la trace IGC</button>
         <p id="p-etat" class="etat" role="status"></p>
@@ -84,12 +86,24 @@
     <section class="prep-centre">
       <div id="p-carte" class="prep-carte"></div>
       <div class="prep-profil"><canvas id="p-profil"></canvas></div>
+      <div id="r-comparaison-bloc" class="prep-comparaison" hidden>
+        <h2>Comparaison des options</h2>
+        <div class="r-table"><table id="r-comparaison" class="r-comparaison"></table></div>
+        <p class="aide">Clique une ligne pour afficher l'option. En gras : le meilleur temps de chaque colonne.</p>
+      </div>
     </section>
 
     <!-- Résultat -->
     <aside class="prep-resultat">
       <h2>Résultat sur le circuit</h2>
-      <div id="r-options" class="r-options"></div>
+      <div id="r-nav" class="r-nav" hidden>
+        <div class="r-nav-ligne">
+          <button id="r-prec" class="btn r-fleche" type="button" aria-label="Option précédente">◀</button>
+          <div id="r-options" class="r-options"></div>
+          <button id="r-suiv" class="btn r-fleche" type="button" aria-label="Option suivante">▶</button>
+        </div>
+        <p id="r-vue" class="r-vue"></p>
+      </div>
       <div id="r-temps" class="r-temps">—</div>
       <div id="r-vitesse" class="r-vitesse"></div>
       <div id="r-detail" class="r-detail"></div>
@@ -100,8 +114,8 @@
   </main>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="version.js?v=20261107222320"></script>
-  <script src="prep-zones.js?v=20261107222320"></script>
-  <script src="prep.js?v=20261107222320"></script>
+  <script src="version.js?v=20261107222849"></script>
+  <script src="prep-zones.js?v=20261107222849"></script>
+  <script src="prep.js?v=20261107222849"></script>
 </body>
 </html>
