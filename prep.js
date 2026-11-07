@@ -9,7 +9,6 @@
     { id: 'tache_stjean_challes', titre: 'St Jean → Challes' },
     { id: 'test_stcrepin_saintauban', titre: 'St Crépin → Saint-Auban' },
   ];
-  const DEFAUT = { plafond: 2800, vzMax: 4.0 };
   const $ = (id) => document.getElementById(id);
   const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 
@@ -24,7 +23,7 @@
   // ----- worker (même numéro anti-cache que ce script)
   const vParam = (document.currentScript && document.currentScript.src.split('?')[1]) || '';
   const worker = new Worker('prep-calcul.js' + (vParam ? '?' + vParam : ''));
-  const etat = { D: null, zones: [], charge: null, resultat: null, calcul: false };
+  const etat = { D: null, zonesBase: [], zones: [], corrections: {}, sel: null, charge: null, resultat: null, calcul: false };
 
   // ----- carte
   const carte = L.map('p-carte', { preferCanvas: true, zoomControl: true });
@@ -32,7 +31,10 @@
     maxZoom: 17, subdomains: 'abc',
     attribution: 'Carte © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>, SRTM | style © <a href="https://opentopomap.org">OpenTopoMap</a> (CC-BY-SA) · thermiques <a href="https://thermal.kk7.ch">kk7</a>',
   }).addTo(carte);
+  carte.createPane('zonesVol').style.zIndex = 350;                     // sous les thermiques
+  const rendZones = L.svg({ pane: 'zonesVol' });
   const calques = {
+    zonesFond: L.layerGroup().addTo(carte),
     thermiques: L.layerGroup().addTo(carte), circuit: L.layerGroup().addTo(carte),
     zones: L.layerGroup().addTo(carte), trajet: L.layerGroup().addTo(carte),
   };
@@ -48,32 +50,51 @@
     mc: ['p-mc', 'o-mc', v => `${(+v).toFixed(1)} m/s`],
     eff: ['p-eff', 'o-eff', v => `${Math.round(v * 100)} %`],
     rayon: ['p-rayon', 'o-rayon', v => `${v} m`],
+    pmax: ['p-pmax', 'o-pmax', v => `${v} m`],
+    pmin: ['p-pmin', 'o-pmin', v => `${v} m`],
+    vz: ['p-vz', 'o-vz', v => `${(+v).toFixed(1)} m/s`],
   };
   for (const [cle, [idIn, idOut, fmt]] of Object.entries(curseurs)) {
     if (regl[cle] != null) $(idIn).value = regl[cle];
     const maj = () => { $(idOut).textContent = fmt($(idIn).value); regl[cle] = +$(idIn).value; ecrire('spirale-prep-reglages', regl); };
     $(idIn).addEventListener('input', maj); maj();
+    if (['pmax', 'pmin', 'vz'].includes(cle)) $(idIn).addEventListener('input', () => { majZones(); });
   }
-  const zoneCourante = () => etat.zones[$('p-zone').selectedIndex] || null;
-  function afficherZone() {
-    const z = zoneCourante(); if (!z) return;
-    $('p-plafond').value = z.plafond; $('p-vz').value = z.vzMax;
-    $('o-plafond').textContent = `${z.plafond} m`; $('o-vz').textContent = `${(+z.vzMax).toFixed(1)} m/s`;
+  // ----- zones de vol (plafond automatique selon la hauteur des crêtes + corrections par zone)
+  function majZones() {
+    if (!etat.D) return;
+    etat.zones = reglerZonesVol(etat.zonesBase, { plafondMax: +$('p-pmax').value, plafondPlaine: +$('p-pmin').value, vzMax: +$('p-vz').value }, etat.corrections);
+    dessinerZones(); afficherZoneSel();
   }
-  function modifierZone() {
-    const plaf = +$('p-plafond').value, vz = +$('p-vz').value;
-    const cibles = $('p-tout').checked ? etat.zones : [zoneCourante()];
-    cibles.forEach(z => { z.plafond = plaf; z.vzMax = vz; });
-    $('o-plafond').textContent = `${plaf} m`; $('o-vz').textContent = `${vz.toFixed(1)} m/s`;
-    ecrire('spirale-prep-zones-' + etat.D.id, etat.zones.map(z => ({ plafond: z.plafond, vzMax: z.vzMax })));
-    dessinerZones();
+  function afficherZoneSel() {
+    const z = etat.zones.find(x => x.id === etat.sel);
+    $('p-zone-reglage').hidden = !z;
+    if (!z) { $('p-zone-info').textContent = 'Clique une zone sur la carte pour la corriger.'; return; }
+    const c = etat.corrections[z.id] || {};
+    $('p-zone-info').textContent = `Zone n° ${z.id + 1} · crêtes vers ${Math.round(z.crete)} m · plafond automatique ${z.auto} m`;
+    $('p-corr').value = c.plafond || 0; $('o-corr').textContent = `${(c.plafond || 0) >= 0 ? '+' : ''}${c.plafond || 0} m → ${z.plafond} m`;
+    $('p-vzz').value = c.vz || 1; $('o-vzz').textContent = `×${(c.vz || 1).toFixed(2)} → ${z.vzMax.toFixed(1)} m/s`;
   }
-  $('p-zone').addEventListener('change', afficherZone);
-  $('p-plafond').addEventListener('input', modifierZone);
-  $('p-vz').addEventListener('input', modifierZone);
+  function corriger() {
+    if (etat.sel == null) return;
+    const c = etat.corrections[etat.sel] = etat.corrections[etat.sel] || {};
+    c.plafond = +$('p-corr').value; c.vz = +$('p-vzz').value;
+    if (!c.plafond && c.vz === 1) delete etat.corrections[etat.sel];
+    ecrire('spirale-prep-corr-' + etat.D.id, etat.corrections);
+    majZones();
+  }
+  $('p-corr').addEventListener('input', corriger);
+  $('p-vzz').addEventListener('input', corriger);
   $('p-zones-defaut').addEventListener('click', () => {
-    etat.zones.forEach(z => { z.plafond = DEFAUT.plafond; z.vzMax = DEFAUT.vzMax; });
-    ecrire('spirale-prep-zones-' + etat.D.id, null); afficherZone(); dessinerZones();
+    etat.corrections = {}; ecrire('spirale-prep-corr-' + etat.D.id, {}); majZones();
+  });
+  carte.on('click', (e) => {     // zone cliquée = germe le plus proche (cellules de Voronoï)
+    if (!etat.zones.length) return;
+    let b = null, db = Infinity;
+    const k = Math.cos(e.latlng.lat * Math.PI / 180);
+    etat.zones.forEach(z => { const d = (z.lat - e.latlng.lat) ** 2 + ((z.lon - e.latlng.lng) * k) ** 2; if (d < db) { db = d; b = z.id; } });
+    etat.sel = etat.sel === b ? null : b;
+    dessinerZones(); afficherZoneSel();
   });
   $('p-circuit').addEventListener('change', () => chargerCircuit($('p-circuit').value));
   $('p-calculer').addEventListener('click', calculer);
@@ -90,16 +111,11 @@
         fetch(`prep/${id}/relief.bin`).then(r => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); }),
       ]);
       etat.D = D;
-      const sauve = lire('spirale-prep-zones-' + id, null);
-      etat.zones = D.tache.map((t, i) => ({
-        nom: t.nom, lat: t.lat, lon: t.lon,
-        plafond: sauve && sauve[i] ? sauve[i].plafond : DEFAUT.plafond,
-        vzMax: sauve && sauve[i] ? sauve[i].vzMax : DEFAUT.vzMax,
-      }));
-      $('p-zone').innerHTML = '';
-      etat.zones.forEach(z => $('p-zone').add(new Option(z.nom, z.nom)));
-      afficherZone();
-      dessinerCircuit(); dessinerZones(); dessinerThermiquesBruts();
+      etat.zonesBase = genererZonesVol(D, relief);
+      etat.corrections = lire('spirale-prep-corr-' + id, {}) || {};
+      etat.sel = null;
+      majZones();
+      dessinerCircuit(); dessinerThermiquesBruts();
       carte.fitBounds([[D.zone.latMin, D.zone.lonMin], [D.zone.latMax, D.zone.lonMax]], { padding: [10, 10] });
       worker.postMessage({ type: 'charger', D, relief }, [relief]);
     } catch (err) {
@@ -155,12 +171,22 @@
         .addTo(calques.circuit);
     });
   }
+  function couleurPlafond(p) {     // rose pâle (bas) -> rouge (haut), comme XC Therm
+    const f = Math.max(0, Math.min(1, (p - 1500) / 2500));
+    return `hsl(${Math.round(8 - 6 * f)}, ${Math.round(45 + 35 * f)}%, ${Math.round(80 - 32 * f)}%)`;
+  }
   function dessinerZones() {
-    calques.zones.clearLayers();
+    calques.zones.clearLayers(); calques.zonesFond.clearLayers();
     etat.zones.forEach(z => {
+      const sel = z.id === etat.sel;
+      L.polygon(z.poly, {
+        renderer: rendZones, pane: 'zonesVol', interactive: false,
+        color: sel ? '#1f6feb' : '#5a4a4a', weight: sel ? 3 : 1, opacity: sel ? 1 : 0.45,
+        fillColor: couleurPlafond(z.plafond), fillOpacity: 0.3,
+      }).addTo(calques.zonesFond);
       L.marker([z.lat, z.lon], {
-        icon: L.divIcon({ className: 'etq-zone', html: `<span>◆ ${z.plafond} m · ${(+z.vzMax).toFixed(1)} m/s</span>`, iconSize: null, iconAnchor: [0, -10] }),
-        interactive: false,
+        icon: L.divIcon({ className: 'etq-zone' + (sel ? ' sel' : '') + (z.corrige ? ' corrige' : ''), html: `<span><b>${z.plafond}</b><small>${z.vzMax.toFixed(1)} m/s</small></span>`, iconSize: null, iconAnchor: [0, 0] }),
+        interactive: false, keyboard: false,
       }).addTo(calques.zones);
     });
   }
@@ -216,7 +242,7 @@
     if (!r.ok) {
       viderResultat(); dessinerThermiques(r.thermiques);
       $('r-temps').textContent = 'Impossible';
-      $('r-detail').textContent = 'Aucun trajet ne passe avec ces réglages : remonte le plafond des zones (cols hauts) ou baisse la marge.';
+      $('r-detail').textContent = 'Aucun trajet ne passe avec ces réglages : remonte le plafond sur les reliefs (ou corrige la zone d’un col haut), ou baisse la marge.';
       etatTexte(`Calcul fait en ${r.dureeCalcul.toFixed(1)} s — aucun trajet possible.`, true);
       return;
     }

@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Spirale — préparation</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-  <link rel="stylesheet" href="style.css?v=20261107220540">
-  <link rel="stylesheet" href="prep.css?v=20261107220540">
-  <script src="acces.js?v=20261107220540"></script>
+  <link rel="stylesheet" href="style.css?v=20261107221445">
+  <link rel="stylesheet" href="prep.css?v=20261107221445">
+  <script src="acces.js?v=20261107221445"></script>
 </head>
 <body class="page-prep">
   <header class="barre">
@@ -33,14 +33,26 @@
       </section>
 
       <section>
-        <h2>Zone météo</h2>
-        <select id="p-zone" aria-label="Zone météo"></select>
-        <label class="case"><input type="checkbox" id="p-tout"> Appliquer à toutes les zones</label>
-        <label class="curseur">Plafond <output id="o-plafond"></output>
-          <input type="range" id="p-plafond" min="1500" max="4500" step="50"></label>
+        <h2>Plafond par zone de vol</h2>
+        <label class="curseur">Plafond sur les plus hauts reliefs <output id="o-pmax"></output>
+          <input type="range" id="p-pmax" min="2000" max="4500" step="50" value="3300"></label>
+        <label class="curseur">Plafond en plaine <output id="o-pmin"></output>
+          <input type="range" id="p-pmin" min="1000" max="3500" step="50" value="1800"></label>
         <label class="curseur">Vz des meilleurs thermiques <output id="o-vz"></output>
-          <input type="range" id="p-vz" min="1" max="6" step="0.1"></label>
-        <button id="p-zones-defaut" class="lien" type="button">Remettre les zones par défaut</button>
+          <input type="range" id="p-vz" min="1" max="6" step="0.1" value="4"></label>
+        <p class="aide">Chaque zone prend automatiquement un plafond entre les deux, selon la hauteur de ses crêtes.</p>
+      </section>
+
+      <section>
+        <h2>Zone sélectionnée</h2>
+        <p id="p-zone-info" class="aide">Clique une zone sur la carte pour la corriger.</p>
+        <div id="p-zone-reglage" hidden>
+          <label class="curseur">Correction du plafond <output id="o-corr"></output>
+            <input type="range" id="p-corr" min="-1000" max="1000" step="50" value="0"></label>
+          <label class="curseur">Force des thermiques <output id="o-vzz"></output>
+            <input type="range" id="p-vzz" min="0.5" max="1.5" step="0.05" value="1"></label>
+        </div>
+        <button id="p-zones-defaut" class="lien" type="button">Remettre toutes les zones en automatique</button>
       </section>
 
       <section>
@@ -86,7 +98,8 @@
   </main>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="version.js?v=20261107220540"></script>
-  <script src="prep.js?v=20261107220540"></script>
+  <script src="version.js?v=20261107221445"></script>
+  <script src="prep-zones.js?v=20261107221445"></script>
+  <script src="prep.js?v=20261107221445"></script>
 </body>
 </html>

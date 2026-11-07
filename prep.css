@@ -49,9 +49,15 @@
 .etq-point { font-weight: 700; color: var(--circuit); padding: 1px 5px; }
 .etq-spirale { font-size: 11px; font-weight: 700; color: #a00; padding: 1px 4px; line-height: 1.25; }
 .etq-zone span {
-  display: inline-block; white-space: nowrap; font-size: 10px; font-weight: 700; color: #0b4fa8;
-  background: rgba(255, 255, 255, .85); border-radius: 4px; padding: 0 4px; transform: translateX(-50%);
+  display: inline-flex; flex-direction: column; align-items: center; transform: translate(-50%, -50%);
+  white-space: nowrap; color: #3b1414; text-shadow: 0 0 3px #fff, 0 0 3px #fff; line-height: 1.05;
 }
+.etq-zone b { font-size: 15px; font-weight: 800; }
+.etq-zone small { font-size: 9px; font-weight: 700; opacity: .8; }
+.etq-zone.corrige b::after { content: '*'; color: #1f6feb; }
+.etq-zone.sel b { color: #1f6feb; }
+#p-zone-reglage { display: flex; flex-direction: column; gap: 8px; }
+#p-zone-reglage[hidden] { display: none; }
 
 @media (max-width: 1100px) {
   .prep { grid-template-columns: 270px minmax(0, 1fr); height: auto; }
