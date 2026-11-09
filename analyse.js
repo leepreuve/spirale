@@ -859,6 +859,67 @@
   // (centres en CT, points retenus dans les zones en AAT), complété par les
   // centres des zones qu'il n'a pas atteintes.
   // restant = distance jusqu'au prochain point du chemin + branches suivantes.
+  // ---------------------------------------------------------------------
+  // Analyse des pompes (thermiques après le départ)
+  //   vzPompe   : force réelle de la pompe une fois centrée = meilleur Vz moyen sur
+  //               ~2 tours (au moins 40 s) dans le thermique
+  //   centrage  : temps depuis l'entrée jusqu'à ce que le Vz sur un tour atteigne 80 % de vzPompe
+  //   mcTheo    : MC atteignable = vzPompe (si on avait monté à fond dès l'entrée)
+  //   mcReel    : Vz réellement obtenu = gain / durée totale (centrage et sortie compris)
+  //   perdu     : temps perdu par rapport à une montée à vzPompe = durée − gain / vzPompe
+  // ---------------------------------------------------------------------
+  function analyserPompes(a, circ) {
+    const t = a.t, alt = a.alt;
+    const tDep = circ && circ.tDepart != null ? circ.tDepart : null;
+    const tFin = circ && circ.tArrivee != null ? circ.tArrivee : Infinity;
+    const vzFenetre = (s, e, i, d) => {      // Vz moyen sur [t_i, t_i + d] borné au thermique
+      let j = i;
+      while (j < e && t[j] - t[i] < d) j++;
+      return t[j] - t[i] >= d * 0.8 ? (alt[j] - alt[i]) / (t[j] - t[i]) : null;
+    };
+    const pompes = [];
+    for (const th of a.thermiques) {
+      if (tDep != null && th.debut < tDep) continue;
+      if (th.debut > tFin || th.gain < 50 || th.duree < 40) continue;
+      const s = th.s, e = th.e;
+      const tour = th.tempsTour && th.tempsTour > 12 && th.tempsTour < 60 ? th.tempsTour : 25;
+      const dLong = Math.min(th.duree, Math.max(40, 2 * tour));
+      let vzPompe = -Infinity, iMax = s;
+      for (let i = s; i <= e; i++) {
+        if (t[e] - t[i] < dLong * 0.8) break;
+        const v = vzFenetre(s, e, i, dLong);
+        if (v != null && v > vzPompe) { vzPompe = v; iMax = i; }
+      }
+      if (!(vzPompe > 0.2)) vzPompe = Math.max(0.2, th.vzMoy);
+      // centrage : premier tour où l'on monte à 80 % de la valeur de la pompe
+      let c = s;
+      while (c < e) {
+        const v = vzFenetre(s, e, c, tour);
+        if (v != null && v >= 0.8 * vzPompe) break;
+        c++;
+      }
+      const centrage = Math.max(0, t[c] - t[s]);
+      const mcReel = th.gain / th.duree;
+      pompes.push({
+        k: a.thermiques.indexOf(th), s, e, debut: th.debut, duree: th.duree, gain: th.gain,
+        altDebut: th.altDebut, altFin: th.altFin, centre: th.centre,
+        vzPompe, mcTheo: vzPompe, mcReel, centrage, iCentre: c, iMax,
+        perdu: Math.max(0, th.duree - th.gain / vzPompe),
+        efficacite: mcReel / vzPompe
+      });
+    }
+    const somme = (f) => pompes.reduce((x, p) => x + f(p), 0);
+    const gain = somme(p => p.gain), duree = somme(p => p.duree);
+    const resume = pompes.length ? {
+      nb: pompes.length, gain, duree,
+      mcReel: gain / duree,                                  // Vz moyen réellement obtenu en spirale
+      mcTheo: gain / somme(p => p.gain / p.vzPompe),         // Vz moyen si chaque pompe était prise centrée dès l'entrée
+      centrage: somme(p => p.centrage), perdu: somme(p => p.perdu),
+      apresDepart: tDep != null
+    } : null;
+    return { pompes, resume };
+  }
+
   function progression(a, circ) {
     if (!circ || !circ.nbAtteints || !circ.chemin.length) return null;
     const P = a.points, n = P.length;
@@ -1162,7 +1223,7 @@
   }
 
   const IGC = {
-    lire, analyser, analyserCircuit, analyserTemps, statsIntervalle, genererVolDemo,
+    lire, analyser, analyserCircuit, analyserTemps, analyserPompes, statsIntervalle, genererVolDemo,
     progression, comparerVols, avanceAu, etatAu,
     preparerZones, contourZone, contient, destination, REGLAGES, distance
   };

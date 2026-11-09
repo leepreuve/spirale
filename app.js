@@ -662,6 +662,8 @@
   function afficherLateral() {
     const A = volA(), B = volB();
     let html = blocCircuit(A, B);
+    html += blocPompes(A, 'a', 0, !!B);
+    if (B) html += blocPompes(B, 'b', etat.decalB, true);
     html += B ? blocDuel(A, B) : `<section class="bloc"><div class="bloc-titre"><h2>Duel</h2></div>
       <div class="invitation">Ajoutez le vol d'un autre pilote sur la même épreuve avec « Ajouter des vols… », puis choisissez-le dans le menu Duel.
       <button class="btn" data-action="demo-b">Comparer avec un vol de démo</button></div></section>`;
@@ -669,6 +671,33 @@
     $('#lateral').innerHTML = html;
     if (etat.grapheParcours) { etat.grapheParcours.destroy(); etat.grapheParcours = null; }
     if (etat.comp) afficherParcours();
+  }
+
+  // Analyse des pompes après le départ : force réelle, temps de centrage, MC atteignable / MC réel
+  function blocPompes(v, cl, decal, duel) {
+    const P = IGC.analyserPompes(v.analyse, v.circ), R = P.resume;
+    const titre = `Pompes${duel ? ` · <span class="point ${cl}"></span>${echapper(nomCourt(v))}` : ''}`;
+    if (!R) return `<section class="bloc"><div class="bloc-titre"><h2>${titre}</h2></div><p class="discret petit">Aucune pompe exploitable${v.circ && v.circ.tDepart != null ? ' après le départ' : ''}.</p></section>`;
+    const pct = (x) => `${nf(x * 100)} %`;
+    let h = `<section class="bloc"><div class="bloc-titre"><h2>${titre}</h2>
+      <span class="discret petit">${R.apresDepart ? 'après le départ' : 'tout le vol (pas de départ)'}</span></div>
+      <div class="pompes-resume">
+        <div><span>MC atteignable</span><b>${nf(R.mcTheo, 1)} m/s</b><small>pompes centrées dès l'entrée</small></div>
+        <div><span>MC réel</span><b>${nf(R.mcReel, 1)} m/s</b><small>${pct(R.mcReel / R.mcTheo)} de l'atteignable</small></div>
+        <div><span>Centrage</span><b>${fmtDuree(R.centrage)}</b><small>sur ${R.nb} pompes</small></div>
+        <div><span>Temps perdu</span><b>${fmtDuree(R.perdu)}</b><small>vs montée à fond</small></div>
+      </div>
+      <div class="table-wrap"><table class="pompes"><thead><tr><th>#</th><th>Heure</th><th>Alt.</th><th title="Force de la pompe une fois centrée (meilleur Vz moyen sur ~2 tours)">Pompe</th><th title="Temps pour atteindre 80 % de la force de la pompe">Centrage</th><th title="Vz réellement obtenu sur tout le thermique">MC réel</th><th title="Temps perdu par rapport à une montée à la force de la pompe dès l'entrée">Perdu</th></tr></thead><tbody>`;
+    P.pompes.forEach((p, n) => {
+      const eff = p.efficacite, cls = eff >= 0.85 ? 'bon' : eff >= 0.7 ? 'moyen' : 'faible';
+      h += `<tr data-action="pompe" data-t="${p.debut + decal}" data-lat="${p.centre.lat}" data-lon="${p.centre.lon}">
+        <td>${n + 1}</td><td>${fmtHeure(p.debut)}</td><td>${nf(p.altDebut)}→${nf(p.altFin)}</td>
+        <td><b>${nf(p.vzPompe, 1)}</b></td><td>${fmtDuree(p.centrage)}</td>
+        <td class="${cls}">${nf(p.mcReel, 1)}</td><td>${fmtDuree(p.perdu)}</td></tr>`;
+    });
+    h += `</tbody></table></div>
+      <p class="discret petit">Pompe = meilleur Vz moyen sur ~2 tours une fois centré. Centrage = temps pour atteindre 80 % de cette valeur. Clique une ligne pour y aller.</p></section>`;
+    return h;
   }
 
   function blocCircuit(A, B) {
@@ -1007,6 +1036,10 @@
     if (!b) return;
     const act = b.dataset.action, val = b.dataset.val;
     if (act === 'type') { etat.typeCircuit = val; etat.typeForce = true; toutAfficher(false); }
+    else if (act === 'pompe') {
+      arreterLecture(); allerA(+b.dataset.t);
+      if (etat.carte) etat.carte.setView([+b.dataset.lat, +b.dataset.lon], Math.max(etat.carte.getZoom(), 12));
+    }
     else if (act === 'alignement') { etat.alignement = val; toutAfficher(false); }
     else if (act === 'unite') { etat.uniteParcours = val; afficherLateral(); majCurseur(); }
     else if (act === 'demo-b') {

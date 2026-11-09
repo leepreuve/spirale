@@ -318,3 +318,15 @@ td.b { color: var(--pilote-b); font-weight: 700; }
   font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 999px; margin-left: 4px;
   background: var(--accent); color: #fff; vertical-align: 1px;
 }
+
+/* ===== Analyse des pompes ===== */
+.pompes-resume { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.pompes-resume > div { background: var(--surface-2); border-radius: 8px; padding: 8px 10px; display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.pompes-resume span { font-size: 11px; color: var(--texte-2); text-transform: uppercase; letter-spacing: .03em; }
+.pompes-resume b { font-size: 20px; font-variant-numeric: tabular-nums; }
+.pompes-resume small { font-size: 11px; color: var(--texte-2); }
+table.pompes tbody tr { cursor: pointer; }
+table.pompes tbody tr:hover { background: var(--surface-2); }
+table.pompes td.bon { color: #2b8a3e; font-weight: 700; }
+table.pompes td.moyen { color: #e67700; font-weight: 700; }
+table.pompes td.faible { color: #c92a2a; font-weight: 700; }
