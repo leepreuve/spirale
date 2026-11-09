@@ -729,6 +729,8 @@
         datasets: [
           { label: 'Centrage', data: avant, borderColor: css('--texte-2'), backgroundColor: css('--texte-2'), showLine: true, borderWidth: 2, pointRadius: 0 },
           { label: 'Centrée', data: apres, borderColor: cPilote, backgroundColor: cPilote, showLine: true, borderWidth: 2.5, pointRadius: 0 },
+          { label: 'Cap au nord', data: (pts.nords || []).map(q => ({ x: q.vz, y: q.alt, t: q.t, n: q.n })), pointStyle: 'triangle', pointRadius: 6, pointHoverRadius: 8,
+            backgroundColor: '#c92a2a', borderColor: '#fff', borderWidth: 1, showLine: false },
           { label: `Pompe ${nf(p.vzPompe, 1)} m/s`, ...vert(p.vzPompe, '#2b8a3e', [6, 4]) },
           { label: `MC réel ${nf(p.mcReel, 1)} m/s`, ...vert(p.mcReel, '#e67700', [2, 3]) },
           { label: '0', ...vert(0, css('--grille'), []) },
@@ -742,7 +744,7 @@
         },
         plugins: {
           legend: { labels: { boxWidth: 12, font: { size: 11 }, filter: (it) => it.text !== '0' } },
-          tooltip: { filter: (it) => it.datasetIndex < 2, callbacks: { label: (c) => `${nf(c.parsed.y)} m : ${nf(c.parsed.x, 1)} m/s (${fmtHeure(c.raw.t, true)})` } }
+          tooltip: { filter: (it) => it.datasetIndex < 3, callbacks: { label: (c) => `${c.datasetIndex === 2 ? `Cap au nord n° ${c.raw.n} · ` : ''}${nf(c.parsed.y)} m : ${nf(c.parsed.x, 1)} m/s (${fmtHeure(c.raw.t, true)})` } }
         }
       }
     });

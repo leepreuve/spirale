@@ -893,8 +893,25 @@
       while (lo > p.s && t[i] - t[lo - 1] <= demi) lo--;
       while (hi < p.e && t[hi + 1] - t[i] <= demi) hi++;
       if (t[hi] - t[lo] < demi) continue;                     // fenêtre trop courte (bords)
-      pts.push({ t: t[i], alt: a.alt[i], vz: (h[hi] - h[lo]) / (t[hi] - t[lo]), centre: i >= p.iCentre });
+      pts.push({ i, t: t[i], alt: a.alt[i], vz: (h[hi] - h[lo]) / (t[hi] - t[lo]), centre: i >= p.iCentre });
     }
+    // Passages cap au nord : la route sol traverse 0°/360° entre deux points
+    const P = a.points, nords = [];
+    let cPrec = null, k = 0;
+    for (let i = p.s; i < p.e; i++) {
+      if (distance(P[i], P[i + 1]) < 2) continue;
+      const c = cap(P[i], P[i + 1]);
+      if (cPrec !== null) {
+        const b = cPrec + ecartAngle(c - cPrec);
+        if (Math.floor(cPrec / 360) !== Math.floor(b / 360)) {
+          // point du profil le plus proche en temps
+          while (k < pts.length - 1 && pts[k + 1].t <= t[i]) k++;
+          if (pts.length && Math.abs(pts[k].t - t[i]) < 5) nords.push({ t: t[i], alt: a.alt[i], vz: pts[k].vz, n: nords.length + 1 });
+        }
+      }
+      cPrec = c;
+    }
+    pts.nords = nords;
     return pts;
   }
 
