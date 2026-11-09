@@ -671,6 +671,7 @@
     $('#lateral').innerHTML = html;
     if (etat.grapheParcours) { etat.grapheParcours.destroy(); etat.grapheParcours = null; }
     if (etat.comp) afficherParcours();
+    dessinerProfilPompe();
   }
 
   // Analyse des pompes après le départ : force réelle, temps de centrage, MC atteignable / MC réel
@@ -690,14 +691,61 @@
       <div class="table-wrap"><table class="pompes"><thead><tr><th>#</th><th>Heure</th><th>Alt.</th><th title="Force de la pompe une fois centrée (meilleur Vz moyen sur ~2 tours)">Pompe</th><th title="Vz sur le premier tour (énergie totale)">1er tour</th><th title="Temps pour atteindre 90 % de la force de la pompe (Vz sur un tour glissant)">Centrage</th><th title="Vz réellement obtenu sur tout le thermique">MC réel</th><th title="Temps perdu par rapport à une montée à la force de la pompe dès l'entrée">Perdu</th></tr></thead><tbody>`;
     P.pompes.forEach((p, n) => {
       const eff = p.efficacite, cls = eff >= 0.85 ? 'bon' : eff >= 0.7 ? 'moyen' : 'faible';
-      h += `<tr data-action="pompe" data-t="${p.debut + decal}" data-lat="${p.centre.lat}" data-lon="${p.centre.lon}">
+      const sel = etat.pompeSel && etat.pompeSel.cl === cl && etat.pompeSel.n === n;
+      h += `<tr data-action="pompe" data-v="${cl}" data-n="${n}" class="${sel ? 'sel' : ''}" data-t="${p.debut + decal}" data-lat="${p.centre.lat}" data-lon="${p.centre.lon}">
         <td>${n + 1}</td><td>${fmtHeure(p.debut)}</td><td>${nf(p.altDebut)}→${nf(p.altFin)}</td>
         <td><b>${nf(p.vzPompe, 1)}</b></td><td>${nf(p.vzTour1, 1)}</td><td>${fmtDuree(p.centrage)}</td>
         <td class="${cls}">${nf(p.mcReel, 1)}</td><td>${fmtDuree(p.perdu)}</td></tr>`;
     });
     h += `</tbody></table></div>
-      <p class="discret petit">Pompe = meilleur Vz moyen sur ~2 tours une fois centré. Centrage = temps pour atteindre 90 % de cette valeur sur un tour. Vz en énergie totale (la ressource d'entrée n'est pas comptée comme de la montée). Clique une ligne pour y aller.</p></section>`;
+      <div class="pompe-graphe" id="pg-${cl}" hidden>
+        <div class="pompe-graphe-titre"></div>
+        <div class="pompe-canvas"><canvas></canvas></div>
+      </div>
+      <p class="discret petit">Pompe = meilleur Vz moyen sur ~2 tours une fois centré. Centrage = temps pour atteindre 90 % de cette valeur sur un tour. Vz en énergie totale (la ressource d'entrée n'est pas comptée comme de la montée). Clique une ligne pour y aller et voir son profil Vz / altitude.</p></section>`;
     return h;
+  }
+
+  // Profil de la pompe choisie : Vz (énergie totale, moyenne sur un tour) en fonction de l'altitude
+  function dessinerProfilPompe() {
+    if (etat.graphePompe) { etat.graphePompe.destroy(); etat.graphePompe = null; }
+    const sel = etat.pompeSel; if (!sel) return;
+    const v = sel.cl === 'b' ? volB() : volA(), box = document.getElementById('pg-' + sel.cl);
+    if (!v || !box) return;
+    const P = IGC.analyserPompes(v.analyse, v.circ), p = P.pompes[sel.n];
+    if (!p) { box.hidden = true; return; }
+    const pts = IGC.profilPompe(v.analyse, p);
+    box.hidden = false;
+    box.querySelector('.pompe-graphe-titre').innerHTML = `<b>Pompe ${sel.n + 1}</b> · ${fmtHeure(p.debut)} · ${nf(p.altDebut)} → ${nf(p.altFin)} m
+      <span class="discret">· pompe ${nf(p.vzPompe, 1)} m/s · MC réel ${nf(p.mcReel, 1)} m/s · centrée en ${fmtDuree(p.centrage)}</span>`;
+    const cPilote = css(sel.cl === 'b' ? '--pilote-b' : '--pilote-a') || '#1f6feb';
+    const avant = pts.filter(q => !q.centre).map(q => ({ x: q.vz, y: q.alt, t: q.t }));
+    const apres = pts.filter(q => q.centre).map(q => ({ x: q.vz, y: q.alt, t: q.t }));
+    const yMin = Math.min(...pts.map(q => q.alt)), yMax = Math.max(...pts.map(q => q.alt));
+    const vert = (x, coul, tiret) => ({ data: [{ x, y: yMin }, { x, y: yMax }], borderColor: coul, borderWidth: 1.5, borderDash: tiret, pointRadius: 0, showLine: true });
+    etat.graphePompe = new Chart(box.querySelector('canvas'), {
+      type: 'scatter',
+      data: {
+        datasets: [
+          { label: 'Centrage', data: avant, borderColor: css('--texte-2'), backgroundColor: css('--texte-2'), showLine: true, borderWidth: 2, pointRadius: 0 },
+          { label: 'Centrée', data: apres, borderColor: cPilote, backgroundColor: cPilote, showLine: true, borderWidth: 2.5, pointRadius: 0 },
+          { label: `Pompe ${nf(p.vzPompe, 1)} m/s`, ...vert(p.vzPompe, '#2b8a3e', [6, 4]) },
+          { label: `MC réel ${nf(p.mcReel, 1)} m/s`, ...vert(p.mcReel, '#e67700', [2, 3]) },
+          { label: '0', ...vert(0, css('--grille'), []) },
+        ]
+      },
+      options: {
+        animation: false, responsive: true, maintainAspectRatio: false,
+        scales: {
+          x: { title: { display: true, text: 'Vz énergie totale (m/s), moyenne sur un tour' }, grid: { color: css('--grille') }, ticks: { font: { size: 11 } } },
+          y: { title: { display: true, text: 'Altitude (m)' }, grid: { color: css('--grille') }, ticks: { font: { size: 11 } } }
+        },
+        plugins: {
+          legend: { labels: { boxWidth: 12, font: { size: 11 }, filter: (it) => it.text !== '0' } },
+          tooltip: { filter: (it) => it.datasetIndex < 2, callbacks: { label: (c) => `${nf(c.parsed.y)} m : ${nf(c.parsed.x, 1)} m/s (${fmtHeure(c.raw.t, true)})` } }
+        }
+      }
+    });
   }
 
   function blocCircuit(A, B) {
@@ -1037,6 +1085,9 @@
     const act = b.dataset.action, val = b.dataset.val;
     if (act === 'type') { etat.typeCircuit = val; etat.typeForce = true; toutAfficher(false); }
     else if (act === 'pompe') {
+      etat.pompeSel = { cl: b.dataset.v, n: +b.dataset.n };
+      b.parentElement.querySelectorAll('tr').forEach(tr => tr.classList.toggle('sel', tr === b));
+      dessinerProfilPompe();
       arreterLecture(); allerA(+b.dataset.t);
       if (etat.carte) etat.carte.setView([+b.dataset.lat, +b.dataset.lon], Math.max(etat.carte.getZoom(), 12));
     }

@@ -869,19 +869,38 @@
   //   mcReel    : Vz réellement obtenu = gain / durée totale (centrage et sortie compris)
   //   perdu     : temps perdu par rapport à une montée à vzPompe = durée − gain / vzPompe
   // ---------------------------------------------------------------------
-  function analyserPompes(a, circ) {
-    const t = a.t, P = a.points, n = t.length;
-    // Altitude « énergie totale » : h + v²/2g. Sans ça, la ressource à l'entrée du thermique
-    // (on ralentit de 160 à 100 km/h = +60 à 80 m en quelques secondes) passe pour une pompe
-    // déjà centrée. v = vitesse sol lissée sur ±3 s (en spirale, le vent se compense sur un tour).
-    const alt = new Float64Array(n);
+  // Altitude « énergie totale » : h + v²/2g. Sans ça, la ressource à l'entrée du thermique
+  // (on ralentit de 160 à 100 km/h = +60 à 80 m en quelques secondes) passe pour une pompe
+  // déjà centrée. v = vitesse sol lissée sur ±3 s (en spirale, le vent se compense sur un tour).
+  function altitudeTE(a) {
+    if (a._hTE) return a._hTE;
+    const t = a.t, P = a.points, n = t.length, h = new Float64Array(n);
     for (let i = 0; i < n; i++) {
       let lo = i, hi = i;
       while (lo > 0 && t[i] - t[lo - 1] <= 3) lo--;
       while (hi < n - 1 && t[hi + 1] - t[i] <= 3) hi++;
       const v = hi > lo ? distance(P[lo], P[hi]) / (t[hi] - t[lo]) : 0;
-      alt[i] = a.alt[i] + v * v / (2 * G);
+      h[i] = a.alt[i] + v * v / (2 * G);
     }
+    return (a._hTE = h);
+  }
+
+  // Profil d'une pompe : Vz (énergie totale, moyenne sur un tour centré) en fonction de l'altitude
+  function profilPompe(a, p) {
+    const t = a.t, h = altitudeTE(a), demi = (p.tour || 25) / 2, pts = [];
+    for (let i = p.s; i <= p.e; i++) {
+      let lo = i, hi = i;
+      while (lo > p.s && t[i] - t[lo - 1] <= demi) lo--;
+      while (hi < p.e && t[hi + 1] - t[i] <= demi) hi++;
+      if (t[hi] - t[lo] < demi) continue;                     // fenêtre trop courte (bords)
+      pts.push({ t: t[i], alt: a.alt[i], vz: (h[hi] - h[lo]) / (t[hi] - t[lo]), centre: i >= p.iCentre });
+    }
+    return pts;
+  }
+
+  function analyserPompes(a, circ) {
+    const t = a.t, n = t.length;
+    const alt = altitudeTE(a);
     const tDep = circ && circ.tDepart != null ? circ.tDepart : null;
     const tFin = circ && circ.tArrivee != null ? circ.tArrivee : Infinity;
     const vzFenetre = (s, e, i, d) => {      // Vz moyen sur [t_i, t_i + d] borné au thermique
@@ -1237,7 +1256,7 @@
   }
 
   const IGC = {
-    lire, analyser, analyserCircuit, analyserTemps, analyserPompes, statsIntervalle, genererVolDemo,
+    lire, analyser, analyserCircuit, analyserTemps, analyserPompes, profilPompe, statsIntervalle, genererVolDemo,
     progression, comparerVols, avanceAu, etatAu,
     preparerZones, contourZone, contient, destination, REGLAGES, distance
   };

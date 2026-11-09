@@ -330,3 +330,8 @@ table.pompes tbody tr:hover { background: var(--surface-2); }
 table.pompes td.bon { color: #2b8a3e; font-weight: 700; }
 table.pompes td.moyen { color: #e67700; font-weight: 700; }
 table.pompes td.faible { color: #c92a2a; font-weight: 700; }
+table.pompes tbody tr.sel { background: var(--surface-2); box-shadow: inset 3px 0 0 var(--accent); }
+.pompe-graphe { display: flex; flex-direction: column; gap: 6px; border: 1px solid var(--bord); border-radius: 10px; padding: 8px; }
+.pompe-graphe[hidden] { display: none; }
+.pompe-graphe-titre { font-size: 12px; }
+.pompe-canvas { position: relative; height: 260px; }
