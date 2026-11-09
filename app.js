@@ -687,16 +687,16 @@
         <div><span>Centrage</span><b>${fmtDuree(R.centrage)}</b><small>sur ${R.nb} pompes</small></div>
         <div><span>Temps perdu</span><b>${fmtDuree(R.perdu)}</b><small>vs montée à fond</small></div>
       </div>
-      <div class="table-wrap"><table class="pompes"><thead><tr><th>#</th><th>Heure</th><th>Alt.</th><th title="Force de la pompe une fois centrée (meilleur Vz moyen sur ~2 tours)">Pompe</th><th title="Temps pour atteindre 80 % de la force de la pompe">Centrage</th><th title="Vz réellement obtenu sur tout le thermique">MC réel</th><th title="Temps perdu par rapport à une montée à la force de la pompe dès l'entrée">Perdu</th></tr></thead><tbody>`;
+      <div class="table-wrap"><table class="pompes"><thead><tr><th>#</th><th>Heure</th><th>Alt.</th><th title="Force de la pompe une fois centrée (meilleur Vz moyen sur ~2 tours)">Pompe</th><th title="Vz sur le premier tour (énergie totale)">1er tour</th><th title="Temps pour atteindre 90 % de la force de la pompe (Vz sur un tour glissant)">Centrage</th><th title="Vz réellement obtenu sur tout le thermique">MC réel</th><th title="Temps perdu par rapport à une montée à la force de la pompe dès l'entrée">Perdu</th></tr></thead><tbody>`;
     P.pompes.forEach((p, n) => {
       const eff = p.efficacite, cls = eff >= 0.85 ? 'bon' : eff >= 0.7 ? 'moyen' : 'faible';
       h += `<tr data-action="pompe" data-t="${p.debut + decal}" data-lat="${p.centre.lat}" data-lon="${p.centre.lon}">
         <td>${n + 1}</td><td>${fmtHeure(p.debut)}</td><td>${nf(p.altDebut)}→${nf(p.altFin)}</td>
-        <td><b>${nf(p.vzPompe, 1)}</b></td><td>${fmtDuree(p.centrage)}</td>
+        <td><b>${nf(p.vzPompe, 1)}</b></td><td>${nf(p.vzTour1, 1)}</td><td>${fmtDuree(p.centrage)}</td>
         <td class="${cls}">${nf(p.mcReel, 1)}</td><td>${fmtDuree(p.perdu)}</td></tr>`;
     });
     h += `</tbody></table></div>
-      <p class="discret petit">Pompe = meilleur Vz moyen sur ~2 tours une fois centré. Centrage = temps pour atteindre 80 % de cette valeur. Clique une ligne pour y aller.</p></section>`;
+      <p class="discret petit">Pompe = meilleur Vz moyen sur ~2 tours une fois centré. Centrage = temps pour atteindre 90 % de cette valeur sur un tour. Vz en énergie totale (la ressource d'entrée n'est pas comptée comme de la montée). Clique une ligne pour y aller.</p></section>`;
     return h;
   }
 

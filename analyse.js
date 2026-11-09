@@ -863,13 +863,25 @@
   // Analyse des pompes (thermiques après le départ)
   //   vzPompe   : force réelle de la pompe une fois centrée = meilleur Vz moyen sur
   //               ~2 tours (au moins 40 s) dans le thermique
-  //   centrage  : temps depuis l'entrée jusqu'à ce que le Vz sur un tour atteigne 80 % de vzPompe
+  //   centrage  : temps depuis l'entrée jusqu'à ce que le Vz sur un tour atteigne 90 % de vzPompe
+  //   (Vz calculés en énergie totale pour ne pas compter la ressource d'entrée comme de la montée)
   //   mcTheo    : MC atteignable = vzPompe (si on avait monté à fond dès l'entrée)
   //   mcReel    : Vz réellement obtenu = gain / durée totale (centrage et sortie compris)
   //   perdu     : temps perdu par rapport à une montée à vzPompe = durée − gain / vzPompe
   // ---------------------------------------------------------------------
   function analyserPompes(a, circ) {
-    const t = a.t, alt = a.alt;
+    const t = a.t, P = a.points, n = t.length;
+    // Altitude « énergie totale » : h + v²/2g. Sans ça, la ressource à l'entrée du thermique
+    // (on ralentit de 160 à 100 km/h = +60 à 80 m en quelques secondes) passe pour une pompe
+    // déjà centrée. v = vitesse sol lissée sur ±3 s (en spirale, le vent se compense sur un tour).
+    const alt = new Float64Array(n);
+    for (let i = 0; i < n; i++) {
+      let lo = i, hi = i;
+      while (lo > 0 && t[i] - t[lo - 1] <= 3) lo--;
+      while (hi < n - 1 && t[hi + 1] - t[i] <= 3) hi++;
+      const v = hi > lo ? distance(P[lo], P[hi]) / (t[hi] - t[lo]) : 0;
+      alt[i] = a.alt[i] + v * v / (2 * G);
+    }
     const tDep = circ && circ.tDepart != null ? circ.tDepart : null;
     const tFin = circ && circ.tArrivee != null ? circ.tArrivee : Infinity;
     const vzFenetre = (s, e, i, d) => {      // Vz moyen sur [t_i, t_i + d] borné au thermique
@@ -891,11 +903,13 @@
         if (v != null && v > vzPompe) { vzPompe = v; iMax = i; }
       }
       if (!(vzPompe > 0.2)) vzPompe = Math.max(0.2, th.vzMoy);
-      // centrage : premier tour où l'on monte à 80 % de la valeur de la pompe
+      vzPompe = Math.min(vzPompe, Math.max(th.vzMax, th.vzMoy));      // garde-fou contre un pic de vitesse
+      // centrage : premier tour (glissant) où l'on monte à 90 % de la valeur de la pompe
+      const vzTour1 = vzFenetre(s, e, s, tour);
       let c = s;
       while (c < e) {
         const v = vzFenetre(s, e, c, tour);
-        if (v != null && v >= 0.8 * vzPompe) break;
+        if (v != null && v >= 0.9 * vzPompe) break;
         c++;
       }
       const centrage = Math.max(0, t[c] - t[s]);
@@ -903,7 +917,7 @@
       pompes.push({
         k: a.thermiques.indexOf(th), s, e, debut: th.debut, duree: th.duree, gain: th.gain,
         altDebut: th.altDebut, altFin: th.altFin, centre: th.centre,
-        vzPompe, mcTheo: vzPompe, mcReel, centrage, iCentre: c, iMax,
+        vzPompe, mcTheo: vzPompe, mcReel, centrage, iCentre: c, iMax, vzTour1, tour,
         perdu: Math.max(0, th.duree - th.gain / vzPompe),
         efficacite: mcReel / vzPompe
       });
