@@ -136,7 +136,7 @@ function calculer(C, P, zones, exclusions = []) {
   const marge = P.margeSol, margeTh = P.margeSol, margePt = Math.min(100, P.margeSol);
 
   // hauteurs imposées par la tâche
-  let hDepart = 2500, hArrivee = 1000;
+  let hDepart = 1700, hArrivee = 1000;   // départ à 1700 m maximum (ou moins si la tâche l'impose)
   if (tache[0].hmax > 0) hDepart = Math.min(hDepart, tache[0].hmax);
   if (tache[M - 1].hmin > 0) hArrivee = tache[M - 1].hmin;
 
@@ -709,7 +709,7 @@ function construireTrace(E, v, finesse, heureDepart) {
   for (let u = 0; u < tApp; u += pas) {
     const s = u / tApp;
     t.push(u - tApp); la.push(E[0].lat1 - (1 - s) * dla / nrm * dApp); lo.push(E[0].lon1 - (1 - s) * dlo / nrm * dApp);
-    alt.push(E[0].h1 + (1 - s) * dApp / finesse); spi.push(0);
+    alt.push(E[0].h1); spi.push(0);   // approche en palier : jamais au-dessus de l'altitude de départ
   }
   let t0 = 0;
   for (const e of E) {
