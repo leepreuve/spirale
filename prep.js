@@ -8,6 +8,7 @@
     { id: 'tache_versoud_barcelonnette', titre: 'Le Versoud → Barcelonnette' },
     { id: 'tache_stjean_challes', titre: 'St Jean → Challes' },
     { id: 'test_stcrepin_saintauban', titre: 'St Crépin → Saint-Auban' },
+    { id: 'tache_versoud_aubenasson', titre: 'Le Versoud → Aubenasson (CdF J1R3)' },
   ];
   const $ = (id) => document.getElementById(id);
   const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
