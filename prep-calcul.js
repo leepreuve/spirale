@@ -57,8 +57,9 @@ function sol(rel, la, lo) {
 }
 
 // ---------------------------------------------------------------- polaire (Diana 2, provisoire)
-function polaire() {
-  const v = [90, 130, 180].map(x => x / 3.6), w = [0.58, 0.85, 1.75];
+// Diana 2 ; k = facteur de charge (1,18 = ballastée, calé sur les vols Condor : vitesses et chutes × √charge)
+function polaire(k = 1) {
+  const v = [90, 130, 180].map(x => x * k / 3.6), w = [0.58, 0.85, 1.75].map(x => x * k);
   // parabole passant par les 3 points : w = a v² + b v + c
   const M = v.map(x => [x * x, x, 1]);
   const s = resoudre3(M, w);
@@ -150,11 +151,7 @@ function calculer(C, P, zones, exclusions = []) {
   // cœurs de parcs nationaux : survol à 1000 m/sol minimum, sauf dans les cheminements autorisés
   const parcs = P.parcs ? P.parcs.filter(p => p.role === 'outer') : [];
   const terr = analyserTerrain(rel);
-  // Thermiques kk7 au pied d'une grande face (plus de 500 m sous le relief le plus haut à 3 km) :
-  // moins hauts et moins fiables qu'en crête, et gonflés par les vols de parapente (décos de pied de pente)
-  const fPied = (la, lo) => { const o = indiceTerrain(rel, la, lo); return 1 - 0.35 * Math.max(0, Math.min(1, (terr.max3[o] - rel.U[o] - 500) / 700)); };
-  for (const [la, lo, p0] of D.kk7) {
-    const p = p0 * fPied(la, lo);
+  for (const [la, lo, p] of D.kk7) {
     lat.push(la); lon.push(lo); src.push(1);
     vz.push(P.vzMin + (vzMaxZ(la, lo) - P.vzMin) * Math.min(1, p / pRef));
     pAct.push(Math.min(1, p / pRef));
@@ -191,7 +188,7 @@ function calculer(C, P, zones, exclusions = []) {
   const nL = Math.floor((hMax - hMin) / pasAlt) + 1;
   const h = new Float64Array(nL); for (let l = 0; l < nL; l++) h[l] = hMin + l * pasAlt;
 
-  const pol = polaire();
+  const pol = polaire(P.ballast || 1);
   const vites = [pol.vitesseMC(P.mc), pol.vFinesseMax, pol.vitesseMC(P.mc + 2.5)];
   const fins = vites.map(v => v / pol.chute(v));
   const NV = vites.length;
@@ -206,6 +203,8 @@ function calculer(C, P, zones, exclusions = []) {
     SOL[i * gr.nx + j] = sol(rel, la0 + (gr.y0 + i * 100) / ky, lo0 + (gr.x0 + j * 100) / kx);
   }
   const PHI = gr.A, NX = gr.nx, NY = gr.ny, GX0 = gr.x0, GY0 = gr.y0;
+  // Vols Condor : le cheminement « kk7 » ne vaut qu'environ 45 % de la carte (kk7 = vrais vols, pas Condor)
+  for (let k = 0; k < PHI.length; k++) PHI[k] *= 0.45;
   // descendance sous le vent : pentes abritées du vent (négatif dans la carte d'ascendance)
   if (vent.U > 0 && (P.sousVent || 0) > 0) {
     for (let i = 0; i < NY; i++) for (let j = 0; j < NX; j++) {
@@ -216,7 +215,8 @@ function calculer(C, P, zones, exclusions = []) {
     }
   }
   // Bande de crête : ascendance alignée tout le long des grandes crêtes (thermiques qui décrochent de l'arête,
-  // brise de pente). Toujours présente (moitié à l'ombre), pleine au soleil, renforcée par le vent de face.
+  // brise de pente). Calée sur 21 vols Condor : ~+1 m/s à l'ombre, ~+2 m/s au soleil pour une crête de 2000 m,
+  // plus forte quand la crête est haute, mais s'éteint quand elle approche du plafond (plus de marge au-dessus).
   {
     const rd = Math.PI / 180, sinE = Math.max(0.1, Math.sin(soleil.elev * rd)), cosE = Math.cos(soleil.elev * rd);
     for (let i = 0; i < NY; i++) for (let j = 0; j < NX; j++) {
@@ -228,8 +228,10 @@ function calculer(C, P, zones, exclusions = []) {
       const fSol = 0.5 + 0.5 * Math.min(1, ins);
       const face = Math.cos((asp - vent.dir) * rd);
       const dyn = vent.U > 0 && face > 0 ? 0.6 * (P.effPente ?? 1) * vent.U * Math.sin(p) * face : 0;
-      const vmax = vzMaxZ(la, lo), k = i * NX + j;
-      PHI[k] = Math.min(PHI[k] + a * (0.45 * vmax * fSol + dyn), Math.max(PHI[k], 0.8 * vmax));
+      const vmax = vzMaxZ(la, lo), k = i * NX + j, hs = rel.U[o];
+      const fH = Math.max(0.3, Math.min(1.5, (hs - 1000) / 1000));          // altitude de la crête
+      const fMarge = Math.max(0.4, Math.min(1, (plafond(la, lo) - hs + 200) / 700)); // marge sous le plafond
+      PHI[k] = Math.min(PHI[k] + a * (2.2 * fSol * fH * fMarge + dyn), Math.max(PHI[k], vmax));
     }
   }
   // masque des parcs sur la même grille (balayage ligne par ligne)

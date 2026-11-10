@@ -111,3 +111,5 @@
 .etq-parc small { font-weight: 700; }
 
 .prep-profil canvas { cursor: crosshair; touch-action: pan-y; }
+.btn.fichier { display: inline-flex; align-items: center; justify-content: center; cursor: pointer; width: 100%; box-sizing: border-box; }
+#p-fpl-info.ok { color: var(--texte, inherit); }

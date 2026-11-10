@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Spirale — préparation</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-  <link rel="stylesheet" href="style.css?v=20261110114850">
-  <link rel="stylesheet" href="prep.css?v=20261110114850">
-  <script src="acces.js?v=20261110114850"></script>
+  <link rel="stylesheet" href="style.css?v=20261110171055">
+  <link rel="stylesheet" href="prep.css?v=20261110171055">
+  <script src="acces.js?v=20261110171055"></script>
 </head>
 <body class="page-prep">
   <header class="barre">
@@ -33,13 +33,20 @@
       </section>
 
       <section>
+        <h2>Météo de la course</h2>
+        <label class="btn fichier">Charger le plan de vol Condor (.fpl)
+          <input type="file" id="p-fpl" accept=".fpl" hidden></label>
+        <p id="p-fpl-info" class="aide">Règle tout seul le vent, les plafonds et la force des thermiques d'après la météo du plan de vol.</p>
+      </section>
+
+      <section>
         <h2>Plafond par zone de vol</h2>
         <label class="curseur">Plafond sur les plus hauts reliefs <output id="o-pmax"></output>
           <input type="range" id="p-pmax" min="2000" max="4500" step="50" value="3300"></label>
         <label class="curseur">Plafond en plaine <output id="o-pmin"></output>
           <input type="range" id="p-pmin" min="1000" max="3500" step="50" value="1800"></label>
         <label class="curseur">Vz des meilleurs thermiques <output id="o-vz"></output>
-          <input type="range" id="p-vz" min="1" max="6" step="0.1" value="4"></label>
+          <input type="range" id="p-vz" min="1" max="6" step="0.1" value="3.2"></label>
         <p class="aide">Chaque zone prend automatiquement un plafond entre les deux, selon la hauteur de ses crêtes.</p>
       </section>
 
@@ -68,16 +75,18 @@
         <label class="curseur">Descendance sous le vent <output id="o-svent"></output>
           <input type="range" id="p-svent" min="0" max="1.5" step="0.05" value="1"></label>
         <label class="case"><input type="checkbox" id="p-voir-cretes" checked> Afficher les crêtes sur la carte</label>
-        <p class="aide">Les grandes crêtes donnent une bande d'ascendance continue le long de l'arête (moitié à l'ombre, pleine au soleil, plus forte face au vent) : suivre la crête principale rapporte plus que couper au pied. Les thermiques kk7 au pied des grandes faces (souvent des décos parapente) comptent moins. Soleil d'un 15 juillet, 1 h après l'heure de départ. Le vent change la vitesse sol en transition ; il crée du vol de pente sur les crêtes au vent et de la descendance sous le vent.</p>
+        <p class="aide">Les grandes crêtes donnent une bande d'ascendance continue le long de l'arête (environ +1 m/s à l'ombre, +2 m/s au soleil, plus face au vent), d'autant plus forte que la crête est haute, tant qu'il reste de la marge sous le plafond. Réglages calés sur 21 vols Condor. Soleil d'un 15 juillet, 1 h après l'heure de départ. Le vent change la vitesse sol en transition ; il crée du vol de pente sur les crêtes au vent et de la descendance sous le vent.</p>
       </section>
 
       <section>
         <h2>Vol</h2>
         <label class="curseur">Marge au-dessus du relief <output id="o-marge"></output>
           <input type="range" id="p-marge" min="50" max="400" step="10" value="150"></label>
-        <p class="aide">Cœurs des parcs nationaux (Écrins, Vanoise, Mercantour) : survol à 1000 m/sol minimum, sauf dans les cheminements autorisés (en orange sur la carte).</p>
+        <label class="case"><input type="checkbox" id="p-ballast" checked> Diana 2 ballastée</label>
+        <label class="case"><input type="checkbox" id="p-sansparcs" checked> Condor : pas d'interdiction de parcs nationaux</label>
+        <p class="aide">Décoche pour un vol réel : cœurs des parcs (Écrins, Vanoise, Mercantour) survolés à 1000 m/sol minimum, sauf dans les cheminements autorisés (en orange).</p>
         <label class="curseur">MacCready <output id="o-mc"></output>
-          <input type="range" id="p-mc" min="0" max="4" step="0.1" value="2"></label>
+          <input type="range" id="p-mc" min="0" max="4" step="0.1" value="2.5"></label>
       </section>
 
       <section>
@@ -125,14 +134,14 @@
       <div id="r-vitesse" class="r-vitesse"></div>
       <div id="r-detail" class="r-detail"></div>
       <div class="r-table"><table id="r-branches"></table></div>
-      <p class="aide">Modèle théorique : thermiques kk7 (moyenne de nombreux vols), polaire Diana 2 provisoire. Vent uniforme (pas de dérive en spirale), crêtes repérées tous les 2 km.</p>
+      <p class="aide">Modèle théorique : thermiques kk7 (moyenne de nombreux vols), polaire Diana 2 (ballastée ou non). Vent uniforme (pas de dérive en spirale), crêtes repérées tous les 2 km.</p>
       <p class="credits">Thermiques : <a href="https://thermal.kk7.ch" target="_blank" rel="noopener">thermal.kk7.ch</a> (M. von Känel, CC BY-NC-SA 4.0) · Relief : Mapzen Terrain Tiles · Parcs : © OpenStreetMap, cheminements d'après l'arrêté 112/2013 du PN des Écrins et les secteurs P1/P2 de la Vanoise · Carte : © OpenStreetMap, SRTM, style © OpenTopoMap (CC-BY-SA)</p>
     </aside>
   </main>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="version.js?v=20261110114850"></script>
-  <script src="prep-zones.js?v=20261110114850"></script>
-  <script src="prep.js?v=20261110114850"></script>
+  <script src="version.js?v=20261110171055"></script>
+  <script src="prep-zones.js?v=20261110171055"></script>
+  <script src="prep.js?v=20261110171055"></script>
 </body>
 </html>

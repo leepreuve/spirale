@@ -68,6 +68,7 @@
     .then(([p, c]) => { etat.parcs = p; etat.couloirs = c; dessinerParcs(); }).catch(() => {});
   function dessinerParcs() {
     calques.parcs.clearLayers();
+    if ($('p-sansparcs').checked) return;
     etat.parcs.filter(p => p.role === 'outer').forEach(p => {
       L.polygon(p.pts, { renderer: rendZones, pane: 'zonesVol', interactive: false, color: '#2b8a3e', weight: 2, fillColor: '#2b8a3e', fillOpacity: 0.15 }).addTo(calques.parcs);
       let la = 0, lo = 0; p.pts.forEach(q => { la += q[0]; lo += q[1]; });
@@ -85,7 +86,7 @@
   CIRCUITS.forEach(c => $('p-circuit').add(new Option(c.titre, c.id)));
   const lire = (k, def) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : def; } catch { return def; } };
   const ecrire = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* stockage indisponible */ } };
-  const regl = lire('spirale-prep-reglages', {});
+  const regl = lire('spirale-prep-reglages-v26', {});   // v26 : nouveaux réglages par défaut (calage Condor)
   const curseurs = {
     marge: ['p-marge', 'o-marge', v => `${v} m`],
     mc: ['p-mc', 'o-mc', v => `${(+v).toFixed(1)} m/s`],
@@ -102,10 +103,35 @@
   };
   for (const [cle, [idIn, idOut, fmt]] of Object.entries(curseurs)) {
     if (regl[cle] != null) $(idIn).value = regl[cle];
-    const maj = () => { $(idOut).textContent = fmt($(idIn).value); regl[cle] = +$(idIn).value; ecrire('spirale-prep-reglages', regl); };
+    const maj = () => { $(idOut).textContent = fmt($(idIn).value); regl[cle] = +$(idIn).value; ecrire('spirale-prep-reglages-v26', regl); };
     $(idIn).addEventListener('input', maj); maj();
     if (['pmax', 'pmin', 'vz'].includes(cle)) $(idIn).addEventListener('input', () => { majZones(); });
   }
+  // ----- cases Condor : parcs et ballast (mémorisées)
+  for (const id of ['p-ballast', 'p-sansparcs']) {
+    if (regl[id] != null) $(id).checked = !!regl[id];
+    $(id).addEventListener('change', () => { regl[id] = $(id).checked ? 1 : 0; ecrire('spirale-prep-reglages-v26', regl); if (id === 'p-sansparcs') dessinerParcs(); });
+  }
+  // ----- météo d'un plan de vol Condor (.fpl) : vent de la zone de base, plafonds, force des thermiques
+  $('p-fpl').addEventListener('change', async (ev) => {
+    const f = ev.target.files[0]; if (!f) return;
+    const txt = new TextDecoder('latin1').decode(await f.arrayBuffer());
+    const zonesM = txt.split(/\[WeatherZone\d+\]/).slice(1).map(b => {
+      const v = k => { const m = b.match(new RegExp('^' + k + '=([-0-9.]+)', 'm')); return m ? +m[1] : NaN; };
+      return { dir: v('WindDir'), vit: v('WindSpeed'), force: v('ThermalsStrength'), inv: v('ThermalsInversionheight') };
+    }).filter(z => isFinite(z.inv));
+    if (!zonesM.length) { $('p-fpl-info').textContent = 'Pas de météo trouvée dans ce fichier.'; return; }
+    const base = zonesM[0], invs = zonesM.map(z => z.inv);
+    const regle = (id, v) => { const el = $(id); el.value = Math.max(+el.min, Math.min(+el.max, v)); el.dispatchEvent(new Event('input')); };
+    regle('p-vdir', Math.round(base.dir / 5) * 5 % 360);
+    regle('p-vkmh', Math.round(base.vit * 3.6));
+    regle('p-pmax', Math.round(Math.max(...invs) / 50) * 50);
+    regle('p-pmin', Math.round(Math.max(Math.min(...invs), 1500) / 50) * 50);
+    if (isFinite(base.force)) regle('p-vz', 2.8 + 0.6 * base.force);
+    const nom = (txt.match(/^TaskName=(.*)$/m) || [, f.name])[1].trim();
+    $('p-fpl-info').textContent = `${nom} : vent du ${Math.round(base.dir)}° ${Math.round(base.vit * 3.6)} km/h, plafonds ${Math.round(Math.min(...invs))}–${Math.round(Math.max(...invs))} m, force ${base.force} (${zonesM.length} zone${zonesM.length > 1 ? 's' : ''} météo). Relance le calcul.`;
+    ev.target.value = '';
+  });
   // ----- zones de vol (plafond automatique selon la hauteur des crêtes + corrections par zone)
   function majZones() {
     if (!etat.D) return;
@@ -312,7 +338,8 @@
       P: {
         margeSol: +$('p-marge').value, mc: +$('p-mc').value, efficacite: +$('p-eff').value, rayon: +$('p-rayon').value,
         vzMin: 1.0, vzFond: 1.5, couloir: 15, portee: 20,
-        parcs: etat.parcs, couloirs: etat.couloirs,
+        parcs: $('p-sansparcs').checked ? [] : etat.parcs, couloirs: etat.couloirs,
+        ballast: $('p-ballast').checked ? 1.18 : 1,
         ventDir: +$('p-vdir').value, ventKmh: +$('p-vkmh').value,
         poidsCretes: +$('p-cretes').value, effPente: +$('p-pente').value, sousVent: +$('p-svent').value,
       },
