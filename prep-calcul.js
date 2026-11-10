@@ -149,7 +149,12 @@ function calculer(C, P, zones, exclusions = []) {
   const exclu = fabriquerExclusion(exclusions, tache);
   // cœurs de parcs nationaux : survol à 1000 m/sol minimum, sauf dans les cheminements autorisés
   const parcs = P.parcs ? P.parcs.filter(p => p.role === 'outer') : [];
-  for (const [la, lo, p] of D.kk7) {
+  const terr = analyserTerrain(rel);
+  // Thermiques kk7 au pied d'une grande face (plus de 500 m sous le relief le plus haut à 3 km) :
+  // moins hauts et moins fiables qu'en crête, et gonflés par les vols de parapente (décos de pied de pente)
+  const fPied = (la, lo) => { const o = indiceTerrain(rel, la, lo); return 1 - 0.35 * Math.max(0, Math.min(1, (terr.max3[o] - rel.U[o] - 500) / 700)); };
+  for (const [la, lo, p0] of D.kk7) {
+    const p = p0 * fPied(la, lo);
     lat.push(la); lon.push(lo); src.push(1);
     vz.push(P.vzMin + (vzMaxZ(la, lo) - P.vzMin) * Math.min(1, p / pRef));
     pAct.push(Math.min(1, p / pRef));
@@ -160,7 +165,6 @@ function calculer(C, P, zones, exclusions = []) {
   }
   // Crêtes : thermiques de crête (pentes ensoleillées) et vol de pente (crêtes au vent)
   const plafNode = new Array(lat.length).fill(NaN);
-  const terr = analyserTerrain(rel);
   const vent = ventVecteur(P.ventDir || 0, P.ventKmh || 0);
   const soleil = positionSoleil((tache[0].lat + tache[M - 1].lat) / 2, (D.heureDepart || 46800) / 3600 + 1);
   const cretes = valeursCretes(terr, rel, soleil, vent, P, vzMaxZ, plafond);
@@ -209,6 +213,23 @@ function calculer(C, P, zones, exclusions = []) {
       const o = indiceTerrain(rel, la, lo);
       const face = Math.cos((terr.aspect[o] - vent.dir) * Math.PI / 180);
       if (face < -0.3) PHI[i * NX + j] -= P.sousVent * 0.5 * vent.U * Math.sin(terr.pente[o]) * (-face);
+    }
+  }
+  // Bande de crête : ascendance alignée tout le long des grandes crêtes (thermiques qui décrochent de l'arête,
+  // brise de pente). Toujours présente (moitié à l'ombre), pleine au soleil, renforcée par le vent de face.
+  {
+    const rd = Math.PI / 180, sinE = Math.max(0.1, Math.sin(soleil.elev * rd)), cosE = Math.cos(soleil.elev * rd);
+    for (let i = 0; i < NY; i++) for (let j = 0; j < NX; j++) {
+      const la = la0 + (GY0 + i * 100) / ky, lo = lo0 + (GX0 + j * 100) / kx;
+      const o = indiceTerrain(rel, la, lo), a = terr.arete[o];
+      if (a < 0.05) continue;
+      const p = terr.pente[o], asp = terr.aspect[o];
+      const ins = Math.max(0, Math.cos(p) * sinE + Math.sin(p) * cosE * Math.cos((soleil.az - asp) * rd)) / sinE;
+      const fSol = 0.5 + 0.5 * Math.min(1, ins);
+      const face = Math.cos((asp - vent.dir) * rd);
+      const dyn = vent.U > 0 && face > 0 ? 0.6 * (P.effPente ?? 1) * vent.U * Math.sin(p) * face : 0;
+      const vmax = vzMaxZ(la, lo), k = i * NX + j;
+      PHI[k] = Math.min(PHI[k] + a * (0.45 * vmax * fSol + dyn), Math.max(PHI[k], 0.8 * vmax));
     }
   }
   // masque des parcs sur la même grille (balayage ligne par ligne)
@@ -498,6 +519,15 @@ function analyserTerrain(rel) {
     return (S[(b + 1) * W + d + 1] - S[a * W + d + 1] - S[(b + 1) * W + c] + S[a * W + c]) / ((b - a + 1) * (d - c + 1));
   };
   const r1i = Math.round(1000 / dy), r1j = Math.round(1000 / dx), r3i = Math.round(3000 / dy), r3j = Math.round(3000 / dx);
+  // arête : 1 sur le haut des grands reliefs (saillant à 1 km et à 3 km), étalé sur ~700 m autour
+  const R0 = new Float32Array(N);
+  for (let i = 0; i < nLat; i++) for (let j = 0; j < nLon; j++) {
+    const o = i * nLon + j, t1 = U[o] - moy(i, j, r1i, r1j), t3 = U[o] - moy(i, j, r3i, r3j);
+    R0[o] = Math.max(0, Math.min(1, (t3 - 150) / 450)) * Math.max(0, Math.min(1, (t1 + 20) / 80));
+  }
+  const arete = etalerMax(R0, nLat, nLon, Math.round(700 / dy), Math.round(700 / dx), true);
+  // relief le plus haut à moins de 3 km : repère les thermiques au pied des grandes faces
+  const max3 = etalerMax(U, nLat, nLon, r3i, r3j, false);
   // crêtes : le point le plus « saillant » de chaque carré d'environ 2 km
   const bi = Math.max(1, Math.round(2000 / dy)), bj = Math.max(1, Math.round(2000 / dx)), cretes = [];
   for (let I = 0; I < nLat; I += bi) for (let J = 0; J < nLon; J += bj) {
@@ -516,7 +546,27 @@ function analyserTerrain(rel) {
     }
     cretes.push({ lat: rel.latMin + best.i * rel.dLat, lon: rel.lonMin + best.j * rel.dLon, h: h0, hauteur: Math.min(1500, best.t3), ech, i: best.i, j: best.j });
   }
-  return (rel.terrain = { pente, aspect, cretes, dx, dy });
+  return (rel.terrain = { pente, aspect, cretes, dx, dy, arete, max3 });
+}
+
+// Maximum glissant séparable (lignes puis colonnes) ; décroissance linéaire avec la distance si demandé
+function etalerMax(A, nI, nJ, ri, rj, decroit) {
+  const T = new Float32Array(A.length), B = new Float32Array(A.length);
+  for (let i = 0; i < nI; i++) for (let j = 0; j < nJ; j++) {
+    let m = -Infinity;
+    for (let k = Math.max(0, j - rj); k <= Math.min(nJ - 1, j + rj); k++) {
+      const v = A[i * nJ + k] * (decroit ? 1 - Math.abs(k - j) / (rj + 1) : 1); if (v > m) m = v;
+    }
+    T[i * nJ + j] = m;
+  }
+  for (let j = 0; j < nJ; j++) for (let i = 0; i < nI; i++) {
+    let m = -Infinity;
+    for (let k = Math.max(0, i - ri); k <= Math.min(nI - 1, i + ri); k++) {
+      const v = T[k * nJ + j] * (decroit ? 1 - Math.abs(k - i) / (ri + 1) : 1); if (v > m) m = v;
+    }
+    B[i * nJ + j] = m;
+  }
+  return B;
 }
 
 // Soleil un 15 juillet à l'heure locale donnée (heure d'été) : azimut et hauteur (°)
