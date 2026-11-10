@@ -9,6 +9,7 @@
     { id: 'tache_stjean_challes', titre: 'St Jean → Challes' },
     { id: 'test_stcrepin_saintauban', titre: 'St Crépin → Saint-Auban' },
     { id: 'tache_versoud_aubenasson', titre: 'Le Versoud → Aubenasson (CdF J1R3)' },
+    { id: 'tache_gap_fayence', titre: 'Gap-Tallard → Fayence (CdF 2025 É4)' },
   ];
   const $ = (id) => document.getElementById(id);
   const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
