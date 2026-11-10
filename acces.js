@@ -2,6 +2,11 @@
 // GitHub Pages ne sait pas protéger un site côté serveur : ce verrou cache les pages tant que le
 // bon mot de passe n'est pas saisi, mais les fichiers restent publics sur GitHub. C'est une
 // barrière contre les visiteurs, pas une vraie sécurité.
+// Numéro de version dans la pastille des onglets (rempli dès que version.js est chargé)
+document.addEventListener('DOMContentLoaded', () => {
+  const v = window.SPIRALE_VERSION;
+  if (v) document.querySelectorAll('[data-version-court]').forEach(el => { el.textContent = 'V' + v.numero; });
+});
 (() => {
   'use strict';
   const EMPREINTE = '5019f314ef3cd502b3b85e0079fd490b27318d16af5423dfed65f23b3408734c';   // sha-256('spirale:' + mot de passe)

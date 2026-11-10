@@ -505,7 +505,7 @@
     };
     const lat = (x) => coord(x, 2, 'N', 'S'), lon = (x) => coord(x, 3, 'E', 'W');
     lignes.push('AXSPSPIRALE', `HFDTEDATE:${dd},01`, `HFPLTPILOTINCHARGE:Spirale option ${LETTRES[etat.vue]}`, 'HFGTYGLIDERTYPE:Diana 2',
-      'HFGIDGLIDERID:OPTIMAL', 'HFDTMGPSDATUM:WGS84', 'HFFTYFRTYPE:Spirale web V1.7');
+      'HFGIDGLIDERID:OPTIMAL', 'HFDTMGPSDATUM:WGS84', 'HFFTYFRTYPE:Spirale web');
     lignes.push(`C${dd}${hhmmss}${dd}0001${String(T.length - 2).padStart(2, '0')}Trajet optimal`);
     lignes.push(`C${lat(T[0].lat)}${lon(T[0].lon)}Takeoff`);
     T.forEach(t => lignes.push(`C${lat(t.lat)}${lon(t.lon)}${ascii(t.nom)}`));
