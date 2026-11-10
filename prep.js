@@ -116,12 +116,15 @@
   // ----- météo d'un plan de vol Condor (.fpl) : vent de la zone de base, plafonds, force des thermiques
   $('p-fpl').addEventListener('change', async (ev) => {
     const f = ev.target.files[0]; if (!f) return;
-    const txt = new TextDecoder('latin1').decode(await f.arrayBuffer());
+    appliquerMeteoFpl(new TextDecoder('latin1').decode(await f.arrayBuffer()), f.name);
+    ev.target.value = '';
+  });
+  function appliquerMeteoFpl(txt, nomFichier) {
     const zonesM = txt.split(/\[WeatherZone\d+\]/).slice(1).map(b => {
       const v = k => { const m = b.match(new RegExp('^' + k + '=([-0-9.]+)', 'm')); return m ? +m[1] : NaN; };
       return { dir: v('WindDir'), vit: v('WindSpeed'), force: v('ThermalsStrength'), inv: v('ThermalsInversionheight') };
     }).filter(z => isFinite(z.inv));
-    if (!zonesM.length) { $('p-fpl-info').textContent = 'Pas de météo trouvée dans ce fichier.'; return; }
+    if (!zonesM.length) { $('p-fpl-info').textContent = 'Pas de météo trouvée dans ce fichier.'; return false; }
     const base = zonesM[0], invs = zonesM.map(z => z.inv);
     const regle = (id, v) => { const el = $(id); el.value = Math.max(+el.min, Math.min(+el.max, v)); el.dispatchEvent(new Event('input')); };
     regle('p-vdir', Math.round(base.dir / 5) * 5 % 360);
@@ -129,9 +132,101 @@
     regle('p-pmax', Math.round(Math.max(...invs) / 50) * 50);
     regle('p-pmin', Math.round(Math.max(Math.min(...invs), 1500) / 50) * 50);
     if (isFinite(base.force)) regle('p-vz', 2.8 + 0.6 * base.force);
-    const nom = (txt.match(/^TaskName=(.*)$/m) || [, f.name])[1].trim();
+    const nom = (txt.match(/^TaskName=(.*)$/m) || [, nomFichier])[1].trim();
     $('p-fpl-info').textContent = `${nom} : vent du ${Math.round(base.dir)}° ${Math.round(base.vit * 3.6)} km/h, plafonds ${Math.round(Math.min(...invs))}–${Math.round(Math.max(...invs))} m, force ${base.force} (${zonesM.length} zone${zonesM.length > 1 ? 's' : ''} météo). Relance le calcul.`;
-    ev.target.value = '';
+    return true;
+  }
+
+  // ----- tâches Condor chargées depuis un .fpl ou un .ftr (paysage AA3) : relief et thermiques
+  // découpés dans les données de la région, la tâche est ajoutée à la liste des circuits
+  const AA3 = { zone: 32, x0: 1059840, n0: 4786560 };   // projection Condor du paysage AA3 (UTM 32)
+  function utm2ll(E, N, zone) {
+    const a = 6378137, f = 1 / 298.257223563, e2 = f * (2 - f), ep2 = e2 / (1 - e2), k0 = 0.9996;
+    const e1 = (1 - Math.sqrt(1 - e2)) / (1 + Math.sqrt(1 - e2)), mu = N / k0 / (a * (1 - e2 / 4 - 3 * e2 ** 2 / 64 - 5 * e2 ** 3 / 256));
+    const p = mu + (3 * e1 / 2 - 27 * e1 ** 3 / 32) * Math.sin(2 * mu) + (21 * e1 ** 2 / 16 - 55 * e1 ** 4 / 32) * Math.sin(4 * mu) + (151 * e1 ** 3 / 96) * Math.sin(6 * mu) + (1097 * e1 ** 4 / 512) * Math.sin(8 * mu);
+    const N1 = a / Math.sqrt(1 - e2 * Math.sin(p) ** 2), T1 = Math.tan(p) ** 2, C1 = ep2 * Math.cos(p) ** 2;
+    const R1 = a * (1 - e2) / (1 - e2 * Math.sin(p) ** 2) ** 1.5, D = (E - 500000) / (N1 * k0);
+    const lat = p - (N1 * Math.tan(p) / R1) * (D ** 2 / 2 - (5 + 3 * T1 + 10 * C1 - 4 * C1 ** 2 - 9 * ep2) * D ** 4 / 24 + (61 + 90 * T1 + 298 * C1 + 45 * T1 ** 2 - 252 * ep2 - 3 * C1 ** 2) * D ** 6 / 720);
+    const lon = (D - (1 + 2 * T1 + C1) * D ** 3 / 6 + (5 - 2 * C1 + 28 * T1 - 3 * C1 ** 2 + 8 * ep2 + 24 * T1 ** 2) * D ** 5 / 120) / Math.cos(p);
+    return [lat * 180 / Math.PI, lon * 180 / Math.PI + (zone - 1) * 6 - 177];
+  }
+  const versLatLon = (x, y) => utm2ll(AA3.x0 - x, y + AA3.n0, AA3.zone);
+  function pointTache(k, n, nom, x, y, rayon, angle, hauteur) {
+    const [lat, lon] = versLatLon(x, y);
+    const p = { nom: k === 0 ? 'Départ ' + nom : k === n - 1 ? 'Arrivée ' + nom : `P${k} ${nom}`, lat, lon, rayon, forme: angle === 180 ? 'secteur' : 'cylindre', angle: angle === 180 ? 180 : 360, hmin: 0, hmax: 10000 };
+    if (k === 0 && hauteur > 0 && hauteur < 10000) p.hmax = hauteur;
+    return p;
+  }
+  function lireTacheFpl(txt) {
+    const v = (k) => { const m = txt.match(new RegExp('^' + k + '=(.*)$', 'm')); return m ? m[1].trim() : null; };
+    const n = +v('Count'); if (!(n >= 3)) throw new Error('pas de tâche dans ce .fpl');
+    const pays = v('Landscape'); if (pays && pays !== 'AA3') throw new Error(`paysage ${pays} non pris en charge (seulement AA3)`);
+    const tache = [];
+    for (let k = 1; k < n; k++) tache.push(pointTache(k - 1, n - 1, v('TPName' + k), +v('TPPosX' + k), +v('TPPosY' + k), +v('TPRadius' + k), +v('TPAngle' + k), +v('TPHeight' + k)));
+    return { titre: v('TaskName') || 'Tâche Condor', tache, heureDepart: (+v('StartTime') || 13) * 3600 };
+  }
+  function lireTacheFtr(buf) {
+    const b = new Uint8Array(buf), dv = new DataView(buf), tp = [];
+    for (let k = 0; k < 16; k++) {
+      const o = 247 + 84 * k, n = b[o]; if (!n || n > 16) break;
+      tp.push({ nom: new TextDecoder('latin1').decode(b.slice(o + 1, o + 1 + n)), x: dv.getFloat32(o + 17, true), y: dv.getFloat32(o + 21, true),
+                rayon: dv.getInt32(o + 44, true), angle: dv.getInt32(o + 48, true), h: dv.getFloat32(o + 60, true) });
+    }
+    if (tp.length < 3 || String.fromCharCode(b[0], b[1], b[2]) !== 'FTR') throw new Error('fichier .ftr non reconnu');
+    const pts = tp.slice(1), n = pts.length;
+    const nomPil = (new TextDecoder('latin1').decode(b.slice(150, 240)).match(/[ -~]{2,}/g) || []).slice(0, 2).join(' ');
+    return { titre: `${pts[0].nom} → ${pts[n - 1].nom}` + (nomPil ? ` (replay ${nomPil})` : ''), heureDepart: 13 * 3600,
+             tache: pts.map((p, k) => pointTache(k, n, p.nom, p.x, p.y, p.rayon, p.angle, p.h)) };
+  }
+  let region = null;
+  async function chargerRegion() {
+    if (region) return region;
+    const [D, buf] = await Promise.all([
+      fetch('prep/region_aa3/donnees.json').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }),
+      fetch('prep/region_aa3/relief.bin').then(r => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); }),
+    ]);
+    return (region = { D, Z: new Int16Array(buf) });
+  }
+  function construireCircuit(def, R) {
+    const t = def.tache, marge = 15;
+    const lat0 = (Math.min(...t.map(p => p.lat)) + Math.max(...t.map(p => p.lat))) / 2;
+    const kLat = 111.195, kLon = kLat * Math.cos(lat0 * Math.PI / 180);
+    const z = { latMin: Math.min(...t.map(p => p.lat - (p.rayon / 1000 + marge) / kLat)), latMax: Math.max(...t.map(p => p.lat + (p.rayon / 1000 + marge) / kLat)),
+                lonMin: Math.min(...t.map(p => p.lon - (p.rayon / 1000 + marge) / kLon)), lonMax: Math.max(...t.map(p => p.lon + (p.rayon / 1000 + marge) / kLon)) };
+    const La = R.D.relief.lat, Lo = R.D.relief.lon, NL = R.D.relief.nLon;
+    const i0 = La.findIndex(x => x >= z.latMin), j0 = Lo.findIndex(x => x >= z.lonMin);
+    let i1 = La.length - 1; while (i1 > 0 && La[i1] > z.latMax) i1--;
+    let j1 = Lo.length - 1; while (j1 > 0 && Lo[j1] > z.lonMax) j1--;
+    if (i0 <= 0 || j0 <= 0 || i1 >= La.length - 1 || j1 >= Lo.length - 1 || i1 <= i0 || j1 <= j0)
+      throw new Error('tâche en dehors de la zone couverte par le site');
+    const nLat = i1 - i0 + 1, nLon = j1 - j0 + 1, Z = new Int16Array(nLat * nLon);
+    for (let i = 0; i < nLat; i++) Z.set(R.Z.subarray((i0 + i) * NL + j0, (i0 + i) * NL + j1 + 1), i * nLon);
+    const dans = (p) => p[0] >= z.latMin && p[0] <= z.latMax && p[1] >= z.lonMin && p[1] <= z.lonMax;
+    const D = { id: def.id, titre: def.titre, heureDepart: def.heureDepart, tache: t, zone: z,
+                kk7: R.D.kk7.filter(dans), fond: R.D.fond.filter(dans), passage: R.D.passage.filter(dans),
+                relief: { lat: La.slice(i0, i1 + 1), lon: Lo.slice(j0, j1 + 1), nLat, nLon } };
+    return { D, relief: Z.buffer };
+  }
+  const tachesPerso = lire('spirale-taches-perso', []) || [];
+  tachesPerso.forEach(d => $('p-circuit').add(new Option('★ ' + d.titre, d.id)));
+  $('p-tache').addEventListener('change', async (ev) => {
+    const f = ev.target.files[0]; if (!f) return; ev.target.value = '';
+    try {
+      const buf = await f.arrayBuffer(), estFpl = /\.fpl$/i.test(f.name);
+      const txt = estFpl ? new TextDecoder('latin1').decode(buf) : null;
+      const def = estFpl ? lireTacheFpl(txt) : lireTacheFtr(buf);
+      def.id = 'perso_' + def.tache.map(p => p.lat.toFixed(3) + p.lon.toFixed(3)).join('').replace(/\D/g, '').slice(-24);
+      const i = tachesPerso.findIndex(d => d.id === def.id);
+      if (i >= 0) tachesPerso.splice(i, 1); else $('p-circuit').add(new Option('★ ' + def.titre, def.id));
+      tachesPerso.push(def); while (tachesPerso.length > 12) tachesPerso.shift();
+      ecrire('spirale-taches-perso', tachesPerso);
+      $('p-circuit').value = def.id;
+      const meteo = estFpl && appliquerMeteoFpl(txt, f.name);
+      $('p-tache-info').textContent = `${def.titre} : ${def.tache.length - 1} branches` + (meteo ? ', météo du plan de vol appliquée.' : (estFpl ? '.' : ' (le .ftr ne contient pas la météo : charge le .fpl pour la régler).'));
+      chargerCircuit(def.id);
+    } catch (err) {
+      $('p-tache-info').textContent = 'Impossible de lire cette tâche : ' + err.message;
+    }
   });
   // ----- zones de vol (plafond automatique selon la hauteur des crêtes + corrections par zone)
   function majZones() {
@@ -177,13 +272,20 @@
   // ----- chargement d'un circuit
   async function chargerCircuit(id) {
     etatTexte('Chargement du circuit…');
+    if (id.startsWith('perso_') && !region) {
+      try { etatTexte('Chargement des données de la région (une seule fois)…'); await chargerRegion(); }
+      catch (err) { etatTexte('Données de la région introuvables (' + err.message + ').', true); return; }
+    }
     $('p-calculer').disabled = true; $('p-igc').disabled = true;
     etat.resultat = null; etat.options = []; etat.finOptions = false; etat.vue = 0; viderResultat(); majOptions();
     try {
-      const [D, relief] = await Promise.all([
-        fetch(`prep/${id}/donnees.json`).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }),
-        fetch(`prep/${id}/relief.bin`).then(r => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); }),
-      ]);
+      const perso = tachesPerso.find(d => d.id === id);
+      if (perso) etatTexte('Découpe du relief et des thermiques de la région…');
+      const [D, relief] = perso ? (() => { const c = construireCircuit(perso, region); return [c.D, c.relief]; })()
+        : await Promise.all([
+          fetch(`prep/${id}/donnees.json`).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }),
+          fetch(`prep/${id}/relief.bin`).then(r => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); }),
+        ]);
       etat.D = D;
       etat.zonesBase = genererZonesVol(D, relief);
       etat.corrections = lire('spirale-prep-corr-' + id, {}) || {};
