@@ -415,7 +415,7 @@
   }
 
   // ----- profil
-  function dessinerProfil(r) {
+  function dessinerProfil(r, iCurseur) {
     const cv = $('p-profil'), box = cv.parentElement.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
     cv.width = Math.max(10, box.width * dpr); cv.height = Math.max(10, box.height * dpr);
     const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -428,6 +428,7 @@
     let yMax = 0; for (let i = 0; i < n; i++) yMax = Math.max(yMax, tr.alt[i], tr.plafond[i], tr.sol[i]);
     yMax = Math.ceil((yMax + 200) / 500) * 500;
     const X = d => ml + (d - x0) / (x1 - x0) * (W - ml - mr), Y = a => mt + (1 - a / yMax) * (H - mt - mb);
+    etat.profilGeo = { ml, mr, W, x0, x1, dDep };
     g.font = '11px system-ui, sans-serif'; g.fillStyle = css('--texte-2'); g.strokeStyle = css('--grille'); g.lineWidth = 1;
     for (let a = 0; a <= yMax; a += 500) { g.beginPath(); g.moveTo(ml, Y(a)); g.lineTo(W - mr, Y(a)); g.stroke(); g.fillText(a, 4, Y(a) + 4); }
     const pasKm = (x1 - x0) > 200 ? 50 : 25;
@@ -449,8 +450,47 @@
     const leg = 'trajet noir · spirales rouges · plafond bleu · sol marron', lw = g.measureText(leg).width + 10;
     g.fillStyle = css('--surface'); g.globalAlpha = 0.85; g.fillRect(W - mr - lw, H - mb - 20, lw, 16); g.globalAlpha = 1;
     g.fillStyle = css('--texte-2'); g.fillText(leg, W - mr - lw + 5, H - mb - 8);
+    // curseur (souris sur le profil)
+    if (iCurseur != null && iCurseur >= 0 && iCurseur < n) {
+      const i = iCurseur, x = X(tr.dist[i]);
+      g.strokeStyle = css('--accent') || '#1f6feb'; g.lineWidth = 1; g.setLineDash([3, 3]);
+      g.beginPath(); g.moveTo(x, mt); g.lineTo(x, H - mb); g.stroke(); g.setLineDash([]);
+      g.fillStyle = css('--accent') || '#1f6feb'; g.beginPath(); g.arc(x, Y(tr.alt[i]), 4, 0, 2 * Math.PI); g.fill();
+      const txt = `${Math.round(tr.dist[i] - dDep)} km · ${hms(Math.max(0, tr.t[i] - tr.heureDepart))} · ${Math.round(tr.alt[i])} m · sol ${Math.round(tr.sol[i])} m${tr.spirale[i] ? ' · spirale' : ''}`;
+      const tw = g.measureText(txt).width + 10, tx = Math.min(Math.max(ml, x - tw / 2), W - mr - tw);
+      g.fillStyle = css('--surface'); g.globalAlpha = 0.92; g.fillRect(tx, mt, tw, 17); g.globalAlpha = 1;
+      g.fillStyle = css('--texte'); g.fillText(txt, tx + 5, mt + 12);
+    }
   }
   window.addEventListener('resize', () => dessinerProfil(etat.resultat));
+
+  // Souris sur le profil : le point correspondant suit sur la carte
+  const curseurCarte = L.circleMarker([0, 0], { radius: 7, color: '#fff', weight: 2.5, fillColor: '#1f6feb', fillOpacity: 1, interactive: false });
+  function indiceProfil(clientX) {
+    const r = etat.resultat, G = etat.profilGeo;
+    if (!r || !r.ok || !G) return -1;
+    const box = $('p-profil').getBoundingClientRect();
+    const d = G.x0 + (clientX - box.left - G.ml) / (G.W - G.ml - G.mr) * (G.x1 - G.x0);
+    const D = r.trace.dist; let lo = 0, hi = D.length - 1;
+    while (lo < hi) { const m = (lo + hi) >> 1; if (D[m] < d) lo = m + 1; else hi = m; }
+    return lo;
+  }
+  function survolProfil(e) {
+    const i = indiceProfil(e.clientX); if (i < 0) return;
+    const tr = etat.resultat.trace;
+    dessinerProfil(etat.resultat, i);
+    curseurCarte.setLatLng([tr.lat[i], tr.lon[i]]);
+    if (!carte.hasLayer(curseurCarte)) curseurCarte.addTo(carte);
+    if (etat.suivreProfil && !carte.getBounds().pad(-0.2).contains(curseurCarte.getLatLng())) carte.panTo(curseurCarte.getLatLng(), { animate: false });
+  }
+  const zoneProfil = $('p-profil');
+  zoneProfil.addEventListener('pointermove', survolProfil);
+  zoneProfil.addEventListener('pointerdown', (e) => { etat.suivreProfil = true; survolProfil(e); });   // clic / doigt : la carte suit
+  zoneProfil.addEventListener('pointerleave', () => {
+    etat.suivreProfil = false;
+    if (carte.hasLayer(curseurCarte)) carte.removeLayer(curseurCarte);
+    dessinerProfil(etat.resultat);
+  });
 
   // ----- export IGC
   function telechargerIGC() {
