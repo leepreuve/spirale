@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Spirale — préparation</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-  <link rel="stylesheet" href="style.css?v=20261110095442">
-  <link rel="stylesheet" href="prep.css?v=20261110095442">
-  <script src="acces.js?v=20261110095442"></script>
+  <link rel="stylesheet" href="style.css?v=20261110111606">
+  <link rel="stylesheet" href="prep.css?v=20261110111606">
+  <script src="acces.js?v=20261110111606"></script>
 </head>
 <body class="page-prep">
   <header class="barre">
@@ -53,6 +53,22 @@
             <input type="range" id="p-vzz" min="0.5" max="1.5" step="0.05" value="1"></label>
         </div>
         <button id="p-zones-defaut" class="lien" type="button">Remettre toutes les zones en automatique</button>
+      </section>
+
+      <section>
+        <h2>Vent et crêtes</h2>
+        <label class="curseur">Vent venant du <output id="o-vdir"></output>
+          <input type="range" id="p-vdir" min="0" max="355" step="5" value="225"></label>
+        <label class="curseur">Force du vent <output id="o-vkmh"></output>
+          <input type="range" id="p-vkmh" min="0" max="60" step="1" value="0"></label>
+        <label class="curseur">Thermiques de crête (pentes au soleil) <output id="o-cretes"></output>
+          <input type="range" id="p-cretes" min="0" max="1.5" step="0.05" value="1"></label>
+        <label class="curseur">Vol de pente (crêtes au vent) <output id="o-pente"></output>
+          <input type="range" id="p-pente" min="0" max="1.5" step="0.05" value="1"></label>
+        <label class="curseur">Descendance sous le vent <output id="o-svent"></output>
+          <input type="range" id="p-svent" min="0" max="1.5" step="0.05" value="1"></label>
+        <label class="case"><input type="checkbox" id="p-voir-cretes" checked> Afficher les crêtes sur la carte</label>
+        <p class="aide">Crêtes repérées dans le relief. Soleil d'un 15 juillet, 1 h après l'heure de départ. Le vent change la vitesse sol en transition ; il crée du vol de pente sur les crêtes au vent et de la descendance sous le vent.</p>
       </section>
 
       <section>
@@ -109,14 +125,14 @@
       <div id="r-vitesse" class="r-vitesse"></div>
       <div id="r-detail" class="r-detail"></div>
       <div class="r-table"><table id="r-branches"></table></div>
-      <p class="aide">Modèle théorique : thermiques kk7 (moyenne de nombreux vols), polaire Diana 2 provisoire, sans vent ni vol de pente.</p>
+      <p class="aide">Modèle théorique : thermiques kk7 (moyenne de nombreux vols), polaire Diana 2 provisoire. Vent uniforme (pas de dérive en spirale), crêtes repérées tous les 2 km.</p>
       <p class="credits">Thermiques : <a href="https://thermal.kk7.ch" target="_blank" rel="noopener">thermal.kk7.ch</a> (M. von Känel, CC BY-NC-SA 4.0) · Relief : Mapzen Terrain Tiles · Parcs : © OpenStreetMap, cheminements d'après l'arrêté 112/2013 du PN des Écrins et les secteurs P1/P2 de la Vanoise · Carte : © OpenStreetMap, SRTM, style © OpenTopoMap (CC-BY-SA)</p>
     </aside>
   </main>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="version.js?v=20261110095442"></script>
-  <script src="prep-zones.js?v=20261110095442"></script>
-  <script src="prep.js?v=20261110095442"></script>
+  <script src="version.js?v=20261110111606"></script>
+  <script src="prep-zones.js?v=20261110111606"></script>
+  <script src="prep.js?v=20261110111606"></script>
 </body>
 </html>

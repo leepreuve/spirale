@@ -41,6 +41,26 @@
   };
   carte.setView([44.4, 6.2], 9);
 
+  // ----- crêtes : repères (beige), thermiques de crête (orange) et vol de pente (bleu)
+  calques.cretes = L.layerGroup().addTo(carte);
+  function dessinerCretes() {
+    calques.cretes.clearLayers();
+    if (!$('p-voir-cretes').checked || !etat.cretes) return;
+    const rend = L.canvas({ padding: 0.3 });
+    etat.cretes.forEach(([la, lo, vzT, vzD, h, laD, loD, top]) => {
+      if (!(vzT > 0) && !(vzD > 0)) L.circleMarker([la, lo], { renderer: rend, radius: 2.5, color: '#6b4f2a', weight: 1, fillColor: '#c8a97e', fillOpacity: 0.8 })
+        .bindTooltip(`Crête · ${h} m`).addTo(calques.cretes);
+      if (vzT > 0) L.circleMarker([la, lo], { renderer: rend, radius: 4, color: '#7a4a00', weight: 1, fillColor: '#f59f00', fillOpacity: 0.9 })
+        .bindTooltip(`Thermique de crête · ${h} m · ~${vzT} m/s`).addTo(calques.cretes);
+      if (vzD > 0) {
+        L.polyline([[la, lo], [laD, loD]], { renderer: rend, color: '#1971c2', weight: 2, interactive: false }).addTo(calques.cretes);
+        L.circleMarker([laD, loD], { renderer: rend, radius: 4, color: '#0b3d91', weight: 1, fillColor: '#4dabf7', fillOpacity: 0.95 })
+          .bindTooltip(`Vol de pente · ~${vzD} m/s jusqu'à ${top} m (crête ${h} m)`).addTo(calques.cretes);
+      }
+    });
+  }
+  $('p-voir-cretes').addEventListener('change', dessinerCretes);
+
   // ----- cœurs de parcs nationaux (Écrins, Vanoise, Mercantour) et cheminements autorisés
   calques.parcs = L.layerGroup().addTo(carte);
   etat.parcs = []; etat.couloirs = [];
@@ -71,6 +91,11 @@
     mc: ['p-mc', 'o-mc', v => `${(+v).toFixed(1)} m/s`],
     eff: ['p-eff', 'o-eff', v => `${Math.round(v * 100)} %`],
     rayon: ['p-rayon', 'o-rayon', v => `${v} m`],
+    vdir: ['p-vdir', 'o-vdir', v => `${v}° (${['N', 'NE', 'E', 'SE', 'S', 'SO', 'O', 'NO'][Math.round(v / 45) % 8]})`],
+    vkmh: ['p-vkmh', 'o-vkmh', v => +v ? `${v} km/h` : 'sans vent'],
+    cretes: ['p-cretes', 'o-cretes', v => `${Math.round(v * 100)} %`],
+    pente: ['p-pente', 'o-pente', v => `${Math.round(v * 100)} %`],
+    svent: ['p-svent', 'o-svent', v => `${Math.round(v * 100)} %`],
     pmax: ['p-pmax', 'o-pmax', v => `${v} m`],
     pmin: ['p-pmin', 'o-pmin', v => `${v} m`],
     vz: ['p-vz', 'o-vz', v => `${(+v).toFixed(1)} m/s`],
@@ -196,6 +221,7 @@
     if (etat.mode === 'nouveau') {
       r.variante = 'Optimal';
       etat.options = [r]; etat.vue = 0; etat.finOptions = false;
+      etat.cretes = r.cretes || []; dessinerCretes();
       dessinerThermiques(r.thermiques);
     } else if (r.ok) {
       r.variante = etat.varianteDemandee;
@@ -287,6 +313,8 @@
         margeSol: +$('p-marge').value, mc: +$('p-mc').value, efficacite: +$('p-eff').value, rayon: +$('p-rayon').value,
         vzMin: 1.0, vzFond: 1.5, couloir: 15, portee: 20,
         parcs: etat.parcs, couloirs: etat.couloirs,
+        ventDir: +$('p-vdir').value, ventKmh: +$('p-vkmh').value,
+        poidsCretes: +$('p-cretes').value, effPente: +$('p-pente').value, sousVent: +$('p-svent').value,
       },
     });
   }

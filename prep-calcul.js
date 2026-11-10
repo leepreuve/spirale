@@ -158,11 +158,27 @@ function calculer(C, P, zones, exclusions = []) {
   for (const [la, lo, s] of D.passage) {
     if (s + marge < plafond(la, lo)) { lat.push(la); lon.push(lo); vz.push(0); pAct.push(0); src.push(3); }
   }
+  // Crêtes : thermiques de crête (pentes ensoleillées) et vol de pente (crêtes au vent)
+  const plafNode = new Array(lat.length).fill(NaN);
+  const terr = analyserTerrain(rel);
+  const vent = ventVecteur(P.ventDir || 0, P.ventKmh || 0);
+  const soleil = positionSoleil((tache[0].lat + tache[M - 1].lat) / 2, (D.heureDepart || 46800) / 3600 + 1);
+  const cretes = valeursCretes(terr, rel, soleil, vent, P, vzMaxZ, plafond);
+  const kk7Proche = (la, lo) => {     // kk7 a déjà un thermique à moins de 1,5 km : on ne double pas
+    const k = Math.cos(la * Math.PI / 180);
+    for (let i = M; i < M + D.kk7.length; i++) if (Math.abs(lat[i] - la) < 0.0135 && Math.hypot((lat[i] - la) * 111.2, (lon[i] - lo) * 111.2 * k) < 1.5) return true;
+    return false;
+  };
+  for (const c of cretes) {
+    if (c.vzT > 0 && kk7Proche(c.lat, c.lon)) c.vzT = 0;
+    if (c.vzT > 0) { lat.push(c.lat); lon.push(c.lon); vz.push(c.vzT); pAct.push(c.pT); src.push(4); plafNode.push(NaN); }
+    if (c.vzD > 0) { lat.push(c.latD); lon.push(c.lonD); vz.push(c.vzD); pAct.push(0); src.push(5); plafNode.push(c.topD); }
+  }
   const NG = lat.length;
   let la0 = 0, lo0 = 0; for (let i = 0; i < NG; i++) { la0 += lat[i]; lo0 += lon[i]; } la0 /= NG; lo0 /= NG;
   const kx = 111195 * Math.cos(la0 * Math.PI / 180), ky = 111195;
   const xG = new Float64Array(NG), yG = new Float64Array(NG), plafG = new Float64Array(NG);
-  for (let i = 0; i < NG; i++) { xG[i] = (lon[i] - lo0) * kx; yG[i] = (lat[i] - la0) * ky; plafG[i] = plafond(lat[i], lon[i]); }
+  for (let i = 0; i < NG; i++) { xG[i] = (lon[i] - lo0) * kx; yG[i] = (lat[i] - la0) * ky; plafG[i] = plafond(lat[i], lon[i]); if (!isNaN(plafNode[i])) plafG[i] = Math.min(plafG[i], plafNode[i]); }
   const solXY = (x, y) => sol(rel, la0 + y / ky, lo0 + x / kx);
   const rWP = tache.map(t => t.rayon);
 
@@ -186,6 +202,15 @@ function calculer(C, P, zones, exclusions = []) {
     SOL[i * gr.nx + j] = sol(rel, la0 + (gr.y0 + i * 100) / ky, lo0 + (gr.x0 + j * 100) / kx);
   }
   const PHI = gr.A, NX = gr.nx, NY = gr.ny, GX0 = gr.x0, GY0 = gr.y0;
+  // descendance sous le vent : pentes abritées du vent (négatif dans la carte d'ascendance)
+  if (vent.U > 0 && (P.sousVent || 0) > 0) {
+    for (let i = 0; i < NY; i++) for (let j = 0; j < NX; j++) {
+      const la = la0 + (GY0 + i * 100) / ky, lo = lo0 + (GX0 + j * 100) / kx;
+      const o = indiceTerrain(rel, la, lo);
+      const face = Math.cos((terr.aspect[o] - vent.dir) * Math.PI / 180);
+      if (face < -0.3) PHI[i * NX + j] -= P.sousVent * 0.5 * vent.U * Math.sin(terr.pente[o]) * (-face);
+    }
+  }
   // masque des parcs sur la même grille (balayage ligne par ligne)
   const PARC = new Uint8Array(NX * NY);
   for (const p of parcs) {
@@ -233,8 +258,16 @@ function calculer(C, P, zones, exclusions = []) {
 
   // altitude requise au départ + gain de cheminement, pour une ligne (x0,y0) -> (x1,y1)
   const req = new Float64Array(NV), gain = new Float64Array(NV);
+  const vgL = new Float64Array(NV), finG = new Float64Array(NV);
   function ligne(x0, y0, x1, y1, mg, mgFin, approche) {
     const d = Math.hypot(x1 - x0, y1 - y0);
+    // vitesse sol avec le vent (cap corrigé de la dérive), finesse sol
+    const bx = d > 0 ? (x1 - x0) / d : 0, by = d > 0 ? (y1 - y0) / d : 1;
+    const wa = vent.wx * bx + vent.wy * by, wc = -vent.wx * by + vent.wy * bx;
+    for (let iv = 0; iv < NV; iv++) {
+      const v = vites[iv], vg = v > Math.abs(wc) ? Math.sqrt(v * v - wc * wc) + wa : 0;
+      vgL[iv] = Math.max(vg, 1); finG[iv] = vg > 1 ? fins[iv] * vg / v : 0.001;
+    }
     const K = Math.max(1, Math.ceil(d / pasLigne)), ds = d / K;
     for (let iv = 0; iv < NV; iv++) req[iv] = -Infinity;
     let I = 0, phPrec = phi(x0, y0);
@@ -256,11 +289,11 @@ function calculer(C, P, zones, exclusions = []) {
         else hMinPt = Math.max(hMinPt, Z + margeParc);            // ailleurs : 1000 m/sol minimum
       }
       for (let iv = 0; iv < NV; iv++) {
-        const r = hMinPt + S / fins[iv] - effT * I / vites[iv];
+        const r = hMinPt + S / finG[iv] - effT * I / vgL[iv];
         if (r > req[iv]) req[iv] = r;
       }
     }
-    for (let iv = 0; iv < NV; iv++) gain[iv] = effT * I / vites[iv];
+    for (let iv = 0; iv < NV; iv++) gain[iv] = effT * I / vgL[iv];
     return d;
   }
 
@@ -318,11 +351,11 @@ function calculer(C, P, zones, exclusions = []) {
         if (c !== g && Math.hypot(xG[c] - xG[g], yG[c] - yG[g]) <= portee) sel.push(k);
       }
       const n = sel.length;
-      q = { sel: Int32Array.from(sel), d: new Float32Array(n), req: new Float32Array(n * NV), G: new Float32Array(n * NV) };
+      q = { sel: Int32Array.from(sel), d: new Float32Array(n), req: new Float32Array(n * NV), G: new Float32Array(n * NV), vg: new Float32Array(n * NV) };
       for (let k = 0; k < n; k++) {
         const c = cib[sel[k]];
         q.d[k] = ligne(xG[g], yG[g], xG[c], yG[c], marge, margeTh, 0);
-        for (let iv = 0; iv < NV; iv++) { q.req[k * NV + iv] = req[iv]; q.G[k * NV + iv] = gain[iv]; }
+        for (let iv = 0; iv < NV; iv++) { q.req[k * NV + iv] = req[iv]; q.G[k * NV + iv] = gain[iv]; q.vg[k * NV + iv] = vgL[iv]; }
       }
       const dGP = Math.hypot(xG[p] - xG[g], yG[p] - yG[g]);
       q.dP = Math.max(0, dGP - rWP[p]);
@@ -330,7 +363,7 @@ function calculer(C, P, zones, exclusions = []) {
       const xe = xG[g] + (xG[p] - xG[g]) * fr, ye = yG[g] + (yG[p] - yG[g]) * fr;
       if (p === M - 1) ligne(xG[g], yG[g], xe, ye, marge, 0, 3000);
       else ligne(xG[g], yG[g], xe, ye, marge, margePt, 1000);
-      q.reqP = Float64Array.from(req); q.Gp = Float64Array.from(gain);
+      q.reqP = Float64Array.from(req); q.Gp = Float64Array.from(gain); q.vgP = Float64Array.from(vgL);
       cache[L][j] = q;
     }
 
@@ -341,9 +374,9 @@ function calculer(C, P, zones, exclusions = []) {
       transiter(q, iv, fin, v, hl, t, s, L, base);
       // valider le point suivant
       if (hl < q.reqP[iv]) continue;
-      const hP0 = hl - q.dP / fin;
+      const vgp = q.vgP[iv], hP0 = hl - q.dP * v / (fin * vgp);
       const hP = Math.min(Math.max(hP0, plafG[p]), hP0 + q.Gp[iv]);
-      const t2 = t + q.dP / v;
+      const t2 = t + q.dP / vgp;
       if (p === M - 1) {
         if (hP >= hArrivee) relax(sFin, t2, s, iv);
       } else if (hP >= hMin) {
@@ -358,13 +391,13 @@ function calculer(C, P, zones, exclusions = []) {
     for (let k = 0; k < n; k++) {
       const kv = k * NV + iv;
       if (hl < qreq[kv]) continue;                         // le relief bloque
-      const d = qd[k], hArr = hl - d / fin, G = qG[kv];
+      const d = qd[k], vg = q.vg[kv], hArr = hl - d * v / (fin * vg), G = qG[kv];
       if (hArr + G < hMin) continue;
       const jj = sel[k], pc = plafG[locL[jj]];
       let hA = hArr + G; if (hA > pc) hA = hArr > pc ? hArr : pc;   // pas au-dessus du plafond
       let l2 = ((hA - hMin) / pasAlt + 1e-9) | 0; if (l2 > nL - 1) l2 = nL - 1; else if (l2 < 0) l2 = 0;
       if (hm[jj] >= l2) continue;
-      const s2 = base + l2 * nLL + jj, t2 = t + d / v;
+      const s2 = base + l2 * nLL + jj, t2 = t + d / vg;
       if (fait[s2] === 0 && t2 < T[s2]) { T[s2] = t2; prec[s2] = s; modeV[s2] = iv; tas.push(t2, s2); }
     }
   }
@@ -383,6 +416,8 @@ function calculer(C, P, zones, exclusions = []) {
   for (let i = 0; i < M - 1; i++) out.distanceCircuit += Math.hypot(xG[i + 1] - xG[i], yG[i + 1] - yG[i]) / 1000;
   out.thermiques = [];
   for (let i = M; i < NG; i++) if (src[i] === 1 || src[i] === 2) out.thermiques.push([lat[i], lon[i], Math.round(vz[i] * 10) / 10, src[i]]);
+  out.cretes = cretes.map(c => [c.lat, c.lon, Math.round(c.vzT * 10) / 10, Math.round(c.vzD * 10) / 10, Math.round(c.h), c.latD, c.lonD, Math.round(c.topD || 0)]);
+  out.soleil = { az: Math.round(soleil.az), elev: Math.round(soleil.elev) };
   if (!out.ok) return out;
 
   // ----- reconstruction du chemin
@@ -412,9 +447,9 @@ function calculer(C, P, zones, exclusions = []) {
       const iv = modeV[chemin[k + 1]];
       const fr = dd / Math.max(1, Math.hypot(xG[n2] - xG[n1], yG[n2] - yG[n1]));
       ligne(xG[n1], yG[n1], xG[n1] + (xG[n2] - xG[n1]) * fr, yG[n1] + (yG[n2] - yG[n1]) * fr, 0, 0, 0);
-      const h1 = h[niv[k]], hs = h1 - dd / fins[iv];
+      const h1 = h[niv[k]], hs = h1 - dd / finG[iv];
       const h2 = Math.min(Math.max(hs, plafG[n2]), hs + gain[iv]);
-      E.push({ type: 'T', de: n1, vers: n2, h1, h2, dist: dd / 1000, duree: dd / vites[iv],
+      E.push({ type: 'T', de: n1, vers: n2, h1, h2, dist: dd / 1000, duree: dd / vgL[iv],
         vz: vites[iv] * 3.6, gain: gain[iv], valide: nom, passage: src[n2] === 3 });
       k++;
     }
@@ -432,6 +467,105 @@ function calculer(C, P, zones, exclusions = []) {
   }
   let hmin = Infinity; for (let i = 0; i < nt; i++) if (tr.t[i] >= D.heureDepart) hmin = Math.min(hmin, tr.alt[i] - tr.sol[i]);
   out.hauteurMini = hmin;
+  return out;
+}
+
+// ---------------------------------------------------------------- relief : pentes, crêtes, soleil, vent
+function indiceTerrain(rel, la, lo) {
+  let i = Math.round((la - rel.latMin) / rel.dLat), j = Math.round((lo - rel.lonMin) / rel.dLon);
+  i = Math.min(rel.nLat - 1, Math.max(0, i)); j = Math.min(rel.nLon - 1, Math.max(0, j));
+  return i * rel.nLon + j;
+}
+
+// Pente (rad), orientation de la pente (direction vers l'aval, ° depuis le nord), crêtes repérées
+function analyserTerrain(rel) {
+  if (rel.terrain) return rel.terrain;
+  const { U, nLat, nLon } = rel, N = nLat * nLon;
+  const latMid = rel.latMin + rel.dLat * nLat / 2;
+  const dy = rel.dLat * 111195, dx = rel.dLon * 111195 * Math.cos(latMid * Math.PI / 180);
+  const pente = new Float32Array(N), aspect = new Float32Array(N);
+  for (let i = 1; i < nLat - 1; i++) for (let j = 1; j < nLon - 1; j++) {
+    const o = i * nLon + j;
+    const gx = (U[o + 1] - U[o - 1]) / (2 * dx), gy = (U[o + nLon] - U[o - nLon]) / (2 * dy);
+    pente[o] = Math.atan(Math.hypot(gx, gy));
+    aspect[o] = (Math.atan2(-gx, -gy) * 180 / Math.PI + 360) % 360;
+  }
+  // moyennes locales (image intégrale) -> position topographique à ~1 km et ~3 km
+  const S = new Float64Array((nLat + 1) * (nLon + 1)), W = nLon + 1;
+  for (let i = 0; i < nLat; i++) { let ligneS = 0; for (let j = 0; j < nLon; j++) { ligneS += U[i * nLon + j]; S[(i + 1) * W + j + 1] = S[i * W + j + 1] + ligneS; } }
+  const moy = (i, j, ri, rj) => {
+    const a = Math.max(0, i - ri), b = Math.min(nLat - 1, i + ri), c = Math.max(0, j - rj), d = Math.min(nLon - 1, j + rj);
+    return (S[(b + 1) * W + d + 1] - S[a * W + d + 1] - S[(b + 1) * W + c] + S[a * W + c]) / ((b - a + 1) * (d - c + 1));
+  };
+  const r1i = Math.round(1000 / dy), r1j = Math.round(1000 / dx), r3i = Math.round(3000 / dy), r3j = Math.round(3000 / dx);
+  // crêtes : le point le plus « saillant » de chaque carré d'environ 2 km
+  const bi = Math.max(1, Math.round(2000 / dy)), bj = Math.max(1, Math.round(2000 / dx)), cretes = [];
+  for (let I = 0; I < nLat; I += bi) for (let J = 0; J < nLon; J += bj) {
+    let best = null;
+    for (let i = I; i < Math.min(nLat, I + bi); i++) for (let j = J; j < Math.min(nLon, J + bj); j++) {
+      const o = i * nLon + j, t1 = U[o] - moy(i, j, r1i, r1j), t3 = U[o] - moy(i, j, r3i, r3j);
+      if (t1 > 60 && t3 > 200 && (!best || t3 > best.t3)) best = { i, j, o, t1, t3 };
+    }
+    if (!best) continue;
+    // pentes sous la crête (dans 1,5 km, plus basses que la crête) : servent pour le soleil et le vent
+    const ech = [], h0 = U[best.o], ri = Math.round(1500 / dy), rj = Math.round(1500 / dx), pi = Math.max(1, Math.round(250 / dy)), pj = Math.max(1, Math.round(250 / dx));
+    for (let i = best.i - ri; i <= best.i + ri; i += pi) for (let j = best.j - rj; j <= best.j + rj; j += pj) {
+      if (i < 1 || j < 1 || i >= nLat - 1 || j >= nLon - 1) continue;
+      if (((i - best.i) * dy) ** 2 + ((j - best.j) * dx) ** 2 > 1500 * 1500) continue;
+      const o = i * nLon + j; if (U[o] < h0 - 20 && pente[o] > 0.15) ech.push(o);
+    }
+    cretes.push({ lat: rel.latMin + best.i * rel.dLat, lon: rel.lonMin + best.j * rel.dLon, h: h0, hauteur: Math.min(1500, best.t3), ech, i: best.i, j: best.j });
+  }
+  return (rel.terrain = { pente, aspect, cretes, dx, dy });
+}
+
+// Soleil un 15 juillet à l'heure locale donnée (heure d'été) : azimut et hauteur (°)
+function positionSoleil(lat, heureLocale) {
+  const r = Math.PI / 180, decl = 21.5 * r, H = (heureLocale - 13.6) * 15 * r, f = lat * r;
+  const sinE = Math.sin(f) * Math.sin(decl) + Math.cos(f) * Math.cos(decl) * Math.cos(H);
+  const elev = Math.asin(sinE);
+  const az = (Math.atan2(Math.sin(H), Math.cos(H) * Math.sin(f) - Math.tan(decl) * Math.cos(f)) / r + 180 + 360) % 360;
+  return { az, elev: elev / r };
+}
+
+// Vent « venant de » dir (°), en km/h -> composantes (m/s) vers où il souffle
+function ventVecteur(dir, kmh) {
+  const U = kmh / 3.6, to = (dir + 180) * Math.PI / 180;
+  return { U, dir, wx: U * Math.sin(to), wy: U * Math.cos(to) };
+}
+
+// Pour chaque crête : thermique de crête (ensoleillement des pentes) et vol de pente (pentes au vent)
+function valeursCretes(terr, rel, sol, vent, P, vzMaxZ, plafond) {
+  const r = Math.PI / 180, sinE = Math.max(0.1, Math.sin(sol.elev * r)), cosE = Math.cos(sol.elev * r);
+  const out = [];
+  for (const c of terr.cretes) {
+    if (!c.ech.length) continue;
+    let ins = 0, dyn = 0, nDyn = 0, ax = 0, ay = 0;
+    for (const o of c.ech) {
+      const p = terr.pente[o], a = terr.aspect[o];
+      ins += Math.max(0, Math.cos(p) * sinE + Math.sin(p) * cosE * Math.cos((sol.az - a) * r)) / sinE;
+      const face = Math.cos((a - vent.dir) * r);           // pente tournée vers d'où vient le vent
+      if (face > 0.5) { dyn += vent.U * Math.sin(p) * face; nDyn++; ax += Math.sin(a * r); ay += Math.cos(a * r); }
+    }
+    ins /= c.ech.length;
+    const fT = Math.max(0, Math.min(1, (ins - 0.7) / 0.6)) * Math.min(1, c.hauteur / 700) * (P.poidsCretes ?? 1);
+    let vzT = 0, pT = 0;
+    if (fT > 0.3) {
+      vzT = P.vzMin + (vzMaxZ(c.lat, c.lon) - P.vzMin) * Math.min(1, fT);
+      pT = Math.min(1, 0.8 * fT);
+    }
+    let vzD = 0, latD = c.lat, lonD = c.lon, topD = NaN;
+    if (nDyn >= 3 && vent.U > 0) {
+      vzD = (P.effPente ?? 1) * 0.9 * dyn / nDyn;
+      if (vzD < 0.5) vzD = 0;
+      else {   // point de vol de pente : 300 m côté vent, plafond = crête + moitié de la hauteur de pente
+        const n = Math.hypot(ax, ay) || 1;
+        latD = c.lat + 300 * (ay / n) / 111195; lonD = c.lon + 300 * (ax / n) / (111195 * Math.cos(c.lat * r));
+        topD = Math.min(plafond(c.lat, c.lon), c.h + Math.min(600, 0.5 * c.hauteur));
+      }
+    }
+    out.push({ lat: c.lat, lon: c.lon, h: c.h, vzT, pT, vzD, latD, lonD, topD });
+  }
   return out;
 }
 
