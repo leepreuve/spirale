@@ -240,8 +240,8 @@ function calculer(C, P, zones, exclusions = []) {
       const face = Math.cos((asp - vent.dir) * rd);
       const dyn = vent.U > 0 && face > 0 ? 0.6 * (P.effPente ?? 1) * vent.U * Math.sin(p) * face : 0;
       const vmax = vzMaxZ(la, lo), k = i * NX + j, hs = rel.U[o];
-      const fH = Math.max(0.3, Math.min(1.5, (hs - 1000) / 1000));          // altitude de la crête
-      const fMarge = Math.max(0.4, Math.min(1, (plafond(la, lo) - hs + 200) / 700)); // marge sous le plafond
+      const fH = Math.max(0.3, Math.min(P.bandeHmax ?? 1.5, (hs - 1000) / 1000));          // altitude de la crête
+      const fMarge = Math.max(P.bandeMarge0 ?? 0.4, Math.min(1, (plafond(la, lo) - hs + 200) / 700)); // marge sous le plafond
       PHI[k] = Math.min(PHI[k] + a * (2.2 * fSol * fH * fMarge + dyn), Math.max(PHI[k], vmax));
     }
   }
