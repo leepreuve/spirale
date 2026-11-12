@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Spirale — préparation</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-  <link rel="stylesheet" href="style.css?v=20261110172615">
-  <link rel="stylesheet" href="prep.css?v=20261110172615">
-  <script src="acces.js?v=20261110172615"></script>
+  <link rel="stylesheet" href="style.css?v=20261112111501">
+  <link rel="stylesheet" href="prep.css?v=20261112111501">
+  <script src="acces.js?v=20261112111501"></script>
 </head>
 <body class="page-prep">
   <header class="barre">
@@ -78,6 +78,9 @@
         <label class="curseur">Descendance sous le vent <output id="o-svent"></output>
           <input type="range" id="p-svent" min="0" max="1.5" step="0.05" value="1"></label>
         <label class="case"><input type="checkbox" id="p-voir-cretes" checked> Afficher les crêtes sur la carte</label>
+        <label class="case"><input type="checkbox" id="p-ia"> Cheminements de l'IA (appris sur les vols Condor)</label>
+        <p id="p-ia-info" class="aide"></p>
+        <p class="aide">Remplace kk7, la bande de crête et la descendance sous le vent par la carte de l'IA. Valable pour la météo de la course apprise ; un peu optimiste sur les courses qu'elle a vues.</p>
         <p class="aide">Les grandes crêtes donnent une bande d'ascendance continue le long de l'arête (environ +1 m/s à l'ombre, +2 m/s au soleil, plus face au vent), d'autant plus forte que la crête est haute, tant qu'il reste de la marge sous le plafond. Réglages calés sur 21 vols Condor. Soleil d'un 15 juillet, 1 h après l'heure de départ. Le vent change la vitesse sol en transition ; il crée du vol de pente sur les crêtes au vent et de la descendance sous le vent.</p>
       </section>
 
@@ -143,8 +146,8 @@
   </main>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="version.js?v=20261110172615"></script>
-  <script src="prep-zones.js?v=20261110172615"></script>
-  <script src="prep.js?v=20261110172615"></script>
+  <script src="version.js?v=20261112111501"></script>
+  <script src="prep-zones.js?v=20261112111501"></script>
+  <script src="prep.js?v=20261112111501"></script>
 </body>
 </html>

@@ -205,8 +205,19 @@ function calculer(C, P, zones, exclusions = []) {
   const PHI = gr.A, NX = gr.nx, NY = gr.ny, GX0 = gr.x0, GY0 = gr.y0;
   // Vols Condor : le cheminement « kk7 » ne vaut qu'environ 45 % de la carte (kk7 = vrais vols, pas Condor)
   for (let k = 0; k < PHI.length; k++) PHI[k] *= 0.45;
+  // Carte IA (apprise sur les vols Condor) : elle remplace kk7, la bande de crête et la descendance sous le vent
+  // pour les cheminements. Les thermiques restent ceux de kk7 et des crêtes (l'IA ne sait pas encore les placer).
+  const IA = P.ia || null;
+  if (IA) {
+    const G = IA.netto, ny = G.length, nx = G[0].length;
+    for (let i = 0; i < NY; i++) for (let j = 0; j < NX; j++) {
+      const la = la0 + (GY0 + i * 100) / ky, lo = lo0 + (GX0 + j * 100) / kx;
+      const gi = Math.round((la - IA.lat0) * IA.ky / IA.pas_m), gj = Math.round((lo - IA.lon0) * IA.kx / IA.pas_m);
+      PHI[i * NX + j] = gi >= 0 && gj >= 0 && gi < ny && gj < nx ? G[gi][gj] : 0;
+    }
+  }
   // descendance sous le vent : pentes abritées du vent (négatif dans la carte d'ascendance)
-  if (vent.U > 0 && (P.sousVent || 0) > 0) {
+  if (!IA && vent.U > 0 && (P.sousVent || 0) > 0) {
     for (let i = 0; i < NY; i++) for (let j = 0; j < NX; j++) {
       const la = la0 + (GY0 + i * 100) / ky, lo = lo0 + (GX0 + j * 100) / kx;
       const o = indiceTerrain(rel, la, lo);
@@ -217,7 +228,7 @@ function calculer(C, P, zones, exclusions = []) {
   // Bande de crête : ascendance alignée tout le long des grandes crêtes (thermiques qui décrochent de l'arête,
   // brise de pente). Calée sur 21 vols Condor : ~+1 m/s à l'ombre, ~+2 m/s au soleil pour une crête de 2000 m,
   // plus forte quand la crête est haute, mais s'éteint quand elle approche du plafond (plus de marge au-dessus).
-  {
+  if (!IA) {
     const rd = Math.PI / 180, sinE = Math.max(0.1, Math.sin(soleil.elev * rd)), cosE = Math.cos(soleil.elev * rd);
     for (let i = 0; i < NY; i++) for (let j = 0; j < NX; j++) {
       const la = la0 + (GY0 + i * 100) / ky, lo = lo0 + (GX0 + j * 100) / kx;

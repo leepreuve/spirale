@@ -287,6 +287,13 @@
           fetch(`prep/${id}/relief.bin`).then(r => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); }),
         ]);
       etat.D = D;
+      // carte IA des cheminements, si elle existe pour ce circuit
+      etat.ia = perso ? null : await fetch(`prep/${id}/carte_ia.json`).then(r => r.ok ? r.json() : null).catch(() => null);
+      $('p-ia').disabled = !etat.ia;
+      if (!etat.ia) $('p-ia').checked = false;
+      $('p-ia-info').textContent = etat.ia
+        ? `Carte apprise pour : vent du ${Math.round(etat.ia.meteo.vent_dir)}° ${Math.round(etat.ia.meteo.vent_kmh)} km/h, plafond ${Math.round(etat.ia.meteo.plafond_m)} m, thermiques ${etat.ia.meteo.vz_moyen.toFixed(1)} m/s.`
+        : 'Pas de carte IA pour ce circuit (il faut des vols Condor de ce circuit).';
       etat.zonesBase = genererZonesVol(D, relief);
       etat.corrections = lire('spirale-prep-corr-' + id, {}) || {};
       etat.sel = null;
@@ -443,6 +450,7 @@
         vzMin: 1.0, vzFond: 1.5, couloir: 15, portee: 20,
         parcs: $('p-sansparcs').checked ? [] : etat.parcs, couloirs: etat.couloirs,
         ballast: $('p-ballast').checked ? 1.18 : 1,
+        ia: $('p-ia').checked && etat.ia ? etat.ia : null,
         ventDir: +$('p-vdir').value, ventKmh: +$('p-vkmh').value,
         poidsCretes: +$('p-cretes').value, effPente: +$('p-pente').value, sousVent: +$('p-svent').value,
       },
