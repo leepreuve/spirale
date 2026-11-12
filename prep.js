@@ -11,6 +11,8 @@
     { id: 'tache_versoud_aubenasson', titre: 'Le Versoud → Aubenasson (CdF J1R3)' },
     { id: 'tache_gap_fayence', titre: 'Gap-Tallard → Fayence (CdF 2025 É4)' },
     { id: 'tache_cdf_qualif2', titre: 'Veynes → Challes (CdF 2025 Qualif 2)' },
+    { id: 'tache_vsc_gap_192', titre: 'Gap-Tallard 192 km (VSC, vent du nord)' },
+    { id: 'tache_vsc_gap_viso', titre: 'Gap-Tallard → Viso → Serres 214 km (VSC 18 m)' },
   ];
   const $ = (id) => document.getElementById(id);
   const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
