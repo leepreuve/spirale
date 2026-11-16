@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Spirale — préparation</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-  <link rel="stylesheet" href="style.css?v=20261116114020">
-  <link rel="stylesheet" href="prep.css?v=20261116114020">
-  <script src="acces.js?v=20261116114020"></script>
+  <link rel="stylesheet" href="style.css?v=20261116120337">
+  <link rel="stylesheet" href="prep.css?v=20261116120337">
+  <script src="acces.js?v=20261116120337"></script>
 </head>
 <body class="page-prep">
   <header class="barre">
@@ -28,90 +28,87 @@
     <!-- Réglages -->
     <aside class="prep-reglages">
       <section>
-        <h2>Circuit</h2>
+        <h2>Course</h2>
         <select id="p-circuit" aria-label="Circuit"></select>
-        <label class="btn fichier">Charger une tâche Condor (.fpl ou .ftr)
+        <label class="btn fichier">Charger un plan de vol (.fpl / .ftr)
           <input type="file" id="p-tache" accept=".fpl,.ftr" hidden></label>
-        <p id="p-tache-info" class="aide">La tâche s'ajoute à la liste (★). Avec un .fpl, la météo est réglée en même temps.</p>
+        <p id="p-tache-info" class="aide">Le .fpl donne la tâche et la météo ; la tâche s'ajoute à la liste (★).</p>
       </section>
 
       <section>
-        <h2>Météo de la course</h2>
-        <label class="btn fichier">Charger le plan de vol Condor (.fpl)
-          <input type="file" id="p-fpl" accept=".fpl" hidden></label>
-        <p id="p-fpl-info" class="aide">Règle tout seul le vent, les plafonds et la force des thermiques d'après la météo du plan de vol.</p>
-      </section>
-
-      <section>
-        <h2>Plafond par zone de vol</h2>
-        <label class="curseur">Plafond sur les plus hauts reliefs <output id="o-pmax"></output>
-          <input type="range" id="p-pmax" min="2000" max="4500" step="50" value="3300"></label>
-        <label class="curseur">Plafond en plaine <output id="o-pmin"></output>
-          <input type="range" id="p-pmin" min="1000" max="4500" step="50" value="1800"></label>
-        <label class="curseur">Vz des meilleurs thermiques <output id="o-vz"></output>
-          <input type="range" id="p-vz" min="1" max="6" step="0.1" value="3.2"></label>
-        <p class="aide">Chaque zone prend automatiquement un plafond entre les deux, selon la hauteur de ses crêtes.</p>
-      </section>
-
-      <section>
-        <h2>Zone sélectionnée</h2>
-        <p id="p-zone-info" class="aide">Clique une zone sur la carte pour la corriger.</p>
-        <div id="p-zone-reglage" hidden>
-          <label class="curseur">Correction du plafond <output id="o-corr"></output>
-            <input type="range" id="p-corr" min="-1000" max="1000" step="50" value="0"></label>
-          <label class="curseur">Force des thermiques <output id="o-vzz"></output>
-            <input type="range" id="p-vzz" min="0.5" max="1.5" step="0.05" value="1"></label>
-        </div>
-        <button id="p-zones-defaut" class="lien" type="button">Remettre toutes les zones en automatique</button>
-      </section>
-
-      <section>
-        <h2>Vent et crêtes</h2>
+        <h2>Météo</h2>
         <label class="curseur">Vent venant du <output id="o-vdir"></output>
           <input type="range" id="p-vdir" min="0" max="355" step="5" value="225"></label>
         <label class="curseur">Force du vent <output id="o-vkmh"></output>
           <input type="range" id="p-vkmh" min="0" max="60" step="1" value="0"></label>
-        <label class="curseur">Thermiques de crête (pentes au soleil) <output id="o-cretes"></output>
-          <input type="range" id="p-cretes" min="0" max="1.5" step="0.05" value="1"></label>
-        <label class="curseur">Vol de pente (crêtes au vent) <output id="o-pente"></output>
-          <input type="range" id="p-pente" min="0" max="1.5" step="0.05" value="1"></label>
-        <label class="curseur">Descendance sous le vent <output id="o-svent"></output>
-          <input type="range" id="p-svent" min="0" max="1.5" step="0.05" value="1"></label>
-        <label class="case"><input type="checkbox" id="p-voir-cretes" checked> Afficher les crêtes sur la carte</label>
-        <label class="case"><input type="checkbox" id="p-ia"> Cheminements de l'IA (arbres boostés, 44 vols Condor)</label>
+        <label class="curseur">Plafond en montagne <output id="o-pmax"></output>
+          <input type="range" id="p-pmax" min="2000" max="4500" step="50" value="3300"></label>
+        <label class="curseur">Plafond en plaine <output id="o-pmin"></output>
+          <input type="range" id="p-pmin" min="1000" max="4500" step="50" value="1800"></label>
+        <label class="curseur">Force des thermiques <output id="o-vz"></output>
+          <input type="range" id="p-vz" min="1" max="6" step="0.1" value="3.2"></label>
+        <p id="p-fpl-info" class="aide"></p>
+      </section>
+
+      <section>
+        <label class="case"><input type="checkbox" id="p-ia"> Utiliser la carte de l'IA</label>
         <p id="p-ia-info" class="aide"></p>
-        <p class="aide">Remplace kk7, la bande de crête et la descendance sous le vent par la carte de l'IA. Calculée pour la météo indiquée. Testée sur des courses jamais vues : les lignes qu'elle classe bonnes donnent en moyenne +2,4 m/s de plus que les mauvaises.</p>
-        <p class="aide">Les grandes crêtes donnent une bande d'ascendance continue le long de l'arête (environ +1 m/s à l'ombre, +2 m/s au soleil, plus face au vent), d'autant plus forte que la crête est haute, tant qu'il reste de la marge sous le plafond. Réglages calés sur 21 vols Condor. Soleil d'un 15 juillet, 1 h après l'heure de départ. Le vent change la vitesse sol en transition ; il crée du vol de pente sur les crêtes au vent et de la descendance sous le vent.</p>
-      </section>
-
-      <section>
-        <h2>Vol</h2>
-        <label class="curseur">Marge au-dessus du relief <output id="o-marge"></output>
-          <input type="range" id="p-marge" min="50" max="400" step="10" value="150"></label>
-        <label class="case"><input type="checkbox" id="p-ballast" checked> Diana 2 ballastée</label>
-        <label class="case"><input type="checkbox" id="p-sansparcs" checked> Condor : pas d'interdiction de parcs nationaux</label>
-        <p class="aide">Décoche pour un vol réel : cœurs des parcs (Écrins, Vanoise, Mercantour) survolés à 1000 m/sol minimum, sauf dans les cheminements autorisés (en orange).</p>
-        <label class="curseur">MacCready <output id="o-mc"></output>
-          <input type="range" id="p-mc" min="0" max="4" step="0.1" value="2.5"></label>
-      </section>
-
-      <section>
-        <h2>Cheminement (ligne droite)</h2>
-        <label class="curseur">Efficacité <output id="o-eff"></output>
-          <input type="range" id="p-eff" min="0" max="1.5" step="0.05" value="1"></label>
-        <label class="curseur">Rayon d'aide de chaque thermique <output id="o-rayon"></output>
-          <input type="range" id="p-rayon" min="200" max="1500" step="50" value="500"></label>
-        <p class="aide">Là où beaucoup de thermiques sont proches, leurs zones se touchent et la ligne droite monte (effet « rue »).</p>
       </section>
 
       <div class="prep-actions">
         <button id="p-calculer" class="btn principal" type="button">Calculer le trajet optimal</button>
-        <label class="choix">Option sur
-          <select id="p-branche" aria-label="Partie du circuit à faire varier"></select></label>
-        <button id="p-autre" class="btn" type="button" disabled>Proposer une option B</button>
         <button id="p-igc" class="btn" type="button" disabled>Télécharger la trace IGC</button>
         <p id="p-etat" class="etat" role="status"></p>
       </div>
+
+      <details class="avance">
+        <summary>Réglages avancés</summary>
+        <section>
+          <h2>Planeur et règles</h2>
+          <label class="case"><input type="checkbox" id="p-ballast" checked> Diana 2 ballastée</label>
+          <label class="case"><input type="checkbox" id="p-sansparcs" checked> Condor : pas d'interdiction de parcs nationaux</label>
+          <label class="curseur">Marge au-dessus du relief <output id="o-marge"></output>
+            <input type="range" id="p-marge" min="50" max="400" step="10" value="150"></label>
+          <label class="curseur">MacCready <output id="o-mc"></output>
+            <input type="range" id="p-mc" min="0" max="4" step="0.1" value="2.5"></label>
+        </section>
+        <section>
+          <h2>Zones de vol</h2>
+          <p id="p-zone-info" class="aide">Clique une zone sur la carte pour corriger son plafond.</p>
+          <div id="p-zone-reglage" hidden>
+            <label class="curseur">Correction du plafond <output id="o-corr"></output>
+              <input type="range" id="p-corr" min="-1000" max="1000" step="50" value="0"></label>
+            <label class="curseur">Force des thermiques <output id="o-vzz"></output>
+              <input type="range" id="p-vzz" min="0.5" max="1.5" step="0.05" value="1"></label>
+          </div>
+          <button id="p-zones-defaut" class="lien" type="button">Remettre toutes les zones en automatique</button>
+        </section>
+        <section>
+          <h2>Crêtes et cheminements</h2>
+          <label class="curseur">Thermiques de crête <output id="o-cretes"></output>
+            <input type="range" id="p-cretes" min="0" max="1.5" step="0.05" value="1"></label>
+          <label class="curseur">Vol de pente <output id="o-pente"></output>
+            <input type="range" id="p-pente" min="0" max="1.5" step="0.05" value="1"></label>
+          <label class="curseur">Descendance sous le vent <output id="o-svent"></output>
+            <input type="range" id="p-svent" min="0" max="1.5" step="0.05" value="1"></label>
+          <label class="curseur">Efficacité du cheminement <output id="o-eff"></output>
+            <input type="range" id="p-eff" min="0" max="1.5" step="0.05" value="1"></label>
+          <label class="curseur">Rayon d'aide de chaque thermique <output id="o-rayon"></output>
+            <input type="range" id="p-rayon" min="200" max="1500" step="50" value="500"></label>
+          <label class="case"><input type="checkbox" id="p-voir-cretes" checked> Afficher les crêtes sur la carte</label>
+        </section>
+        <section>
+          <h2>Options de trajet</h2>
+          <label class="choix">Option sur
+            <select id="p-branche" aria-label="Partie du circuit à faire varier"></select></label>
+          <button id="p-autre" class="btn" type="button" disabled>Proposer une option B</button>
+        </section>
+        <section>
+          <h2>Météo seule</h2>
+          <label class="btn fichier">Régler la météo depuis un .fpl
+            <input type="file" id="p-fpl" accept=".fpl" hidden></label>
+        </section>
+      </details>
     </aside>
 
     <!-- Carte + profil -->
@@ -146,8 +143,8 @@
   </main>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="version.js?v=20261116114020"></script>
-  <script src="prep-zones.js?v=20261116114020"></script>
-  <script src="prep.js?v=20261116114020"></script>
+  <script src="version.js?v=20261116120337"></script>
+  <script src="prep-zones.js?v=20261116120337"></script>
+  <script src="prep.js?v=20261116120337"></script>
 </body>
 </html>

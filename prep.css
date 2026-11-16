@@ -113,3 +113,7 @@
 .prep-profil canvas { cursor: crosshair; touch-action: pan-y; }
 .btn.fichier { display: inline-flex; align-items: center; justify-content: center; cursor: pointer; width: 100%; box-sizing: border-box; }
 #p-fpl-info.ok { color: var(--texte, inherit); }
+
+.avance { border-top: 1px solid var(--bord, #d8dde6); padding-top: 8px; }
+.avance > summary { cursor: pointer; font-weight: 600; padding: 6px 0; color: var(--texte-2, #5b6472); }
+.avance > section { margin-top: 10px; }

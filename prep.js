@@ -15,6 +15,7 @@
     { id: 'tache_vsc_gap_viso', titre: 'Gap-Tallard → Viso → Serres 214 km (VSC 18 m)' },
   ];
   const $ = (id) => document.getElementById(id);
+  const VERSION = (window.SPIRALE_VERSION || {}).numero || Date.now();   // évite les données en cache d'une ancienne version
   const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 
   // ----- version
@@ -185,8 +186,8 @@
   async function chargerRegion() {
     if (region) return region;
     const [D, buf] = await Promise.all([
-      fetch('prep/region_aa3/donnees.json').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }),
-      fetch('prep/region_aa3/relief.bin').then(r => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); }),
+      fetch('prep/region_aa3/donnees.json?v=' + VERSION).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }),
+      fetch('prep/region_aa3/relief.bin?v=' + VERSION).then(r => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); }),
     ]);
     return (region = { D, Z: new Int16Array(buf) });
   }
@@ -290,12 +291,12 @@
       if (perso) etatTexte('Découpe du relief et des thermiques de la région…');
       const [D, relief] = perso ? (() => { const c = construireCircuit(perso, region); return [c.D, c.relief]; })()
         : await Promise.all([
-          fetch(`prep/${id}/donnees.json`).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }),
-          fetch(`prep/${id}/relief.bin`).then(r => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); }),
+          fetch(`prep/${id}/donnees.json?v=${VERSION}`).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }),
+          fetch(`prep/${id}/relief.bin?v=${VERSION}`).then(r => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); }),
         ]);
       etat.D = D;
       // carte IA des cheminements, si elle existe pour ce circuit
-      etat.ia = perso ? null : await fetch(`prep/${id}/carte_ia.json`).then(r => r.ok ? r.json() : null).catch(() => null);
+      etat.ia = perso ? null : await fetch(`prep/${id}/carte_ia.json?v=${VERSION}`).then(r => r.ok ? r.json() : null).catch(() => null);
       $('p-ia').disabled = !etat.ia;
       if (!etat.ia) $('p-ia').checked = false;
       $('p-ia-info').textContent = etat.ia
