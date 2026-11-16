@@ -295,7 +295,7 @@
       $('p-ia').disabled = !etat.ia;
       if (!etat.ia) $('p-ia').checked = false;
       $('p-ia-info').textContent = etat.ia
-        ? `Carte apprise pour : vent du ${Math.round(etat.ia.meteo.vent_dir)}° ${Math.round(etat.ia.meteo.vent_kmh)} km/h, plafond ${Math.round(etat.ia.meteo.plafond_m)} m, thermiques ${etat.ia.meteo.vz_moyen.toFixed(1)} m/s.`
+        ? `Carte ${etat.ia.meteo.modele ? '(' + etat.ia.meteo.modele + ') ' : ''}calculée pour : vent du ${Math.round(etat.ia.meteo.vent_dir)}° ${Math.round(etat.ia.meteo.vent_kmh)} km/h, plafond ${Math.round(etat.ia.meteo.plafond_m)} m, thermiques ${etat.ia.meteo.vz_moyen.toFixed(1)} m/s${etat.ia.meteo.defaut ? ' (météo par défaut : pas de course connue sur ce circuit)' : ''}.`
         : 'Pas de carte IA pour ce circuit (il faut des vols Condor de ce circuit).';
       etat.zonesBase = genererZonesVol(D, relief);
       etat.corrections = lire('spirale-prep-corr-' + id, {}) || {};
