@@ -197,11 +197,15 @@
     const z = { latMin: Math.min(...t.map(p => p.lat - (p.rayon / 1000 + marge) / kLat)), latMax: Math.max(...t.map(p => p.lat + (p.rayon / 1000 + marge) / kLat)),
                 lonMin: Math.min(...t.map(p => p.lon - (p.rayon / 1000 + marge) / kLon)), lonMax: Math.max(...t.map(p => p.lon + (p.rayon / 1000 + marge) / kLon)) };
     const La = R.D.relief.lat, Lo = R.D.relief.lon, NL = R.D.relief.nLon;
+    // les points eux-mêmes doivent être dans la région ; la marge autour est simplement rognée au bord
+    const hors = t.filter(p => p.lat <= La[0] || p.lat >= La[La.length - 1] || p.lon <= Lo[0] || p.lon >= Lo[Lo.length - 1]);
+    if (hors.length) throw new Error(`point(s) hors de la zone couverte par le site : ${hors.map(p => p.nom).join(', ')}`);
+    z.latMin = Math.max(z.latMin, La[0]); z.latMax = Math.min(z.latMax, La[La.length - 1]);
+    z.lonMin = Math.max(z.lonMin, Lo[0]); z.lonMax = Math.min(z.lonMax, Lo[Lo.length - 1]);
     const i0 = La.findIndex(x => x >= z.latMin), j0 = Lo.findIndex(x => x >= z.lonMin);
     let i1 = La.length - 1; while (i1 > 0 && La[i1] > z.latMax) i1--;
     let j1 = Lo.length - 1; while (j1 > 0 && Lo[j1] > z.lonMax) j1--;
-    if (i0 <= 0 || j0 <= 0 || i1 >= La.length - 1 || j1 >= Lo.length - 1 || i1 <= i0 || j1 <= j0)
-      throw new Error('tâche en dehors de la zone couverte par le site');
+    if (i1 <= i0 || j1 <= j0) throw new Error('tâche en dehors de la zone couverte par le site');
     const nLat = i1 - i0 + 1, nLon = j1 - j0 + 1, Z = new Int16Array(nLat * nLon);
     for (let i = 0; i < nLat; i++) Z.set(R.Z.subarray((i0 + i) * NL + j0, (i0 + i) * NL + j1 + 1), i * nLon);
     const dans = (p) => p[0] >= z.latMin && p[0] <= z.latMax && p[1] >= z.lonMin && p[1] <= z.lonMax;
@@ -557,14 +561,15 @@
       viderResultat();
       $('r-temps').textContent = 'Impossible';
       $('r-detail').textContent = 'Aucun trajet ne passe avec ces réglages : remonte le plafond sur les reliefs (ou corrige la zone d’un col haut), ou baisse la marge.';
-      etatTexte(`Calcul fait en ${r.dureeCalcul.toFixed(1)} s — aucun trajet possible.`, true);
+      etatTexte(`Calcul fait en ${r.dureeCalcul.toFixed(1)} s — aucun trajet possible.` + (r.plafondsReleves
+        ? ` Point(s) trop haut(s) : ${r.plafondsReleves.points.map(t => `${t.nom} (il faut ${t.besoin} m, plafond ${t.plafond} m)`).join(', ')}.` : ' Essaie de monter les plafonds ou d\'élargir la marge.'), true);
       return;
     }
     const E = r.etapes, mo = E.filter(e => e.type === 'M');
     const tSpi = mo.reduce((a, e) => a + e.duree, 0), gSpi = mo.reduce((a, e) => a + e.h2 - e.h1, 0);
     $('r-temps').textContent = hms(r.tempsTotal);
     $('r-vitesse').textContent = `${(r.distanceCircuit / (r.tempsTotal / 3600)).toFixed(1)} km/h · ${r.distanceCircuit.toFixed(1)} km`;
-    $('r-detail').textContent = (r.couloirElargi ? 'Couloir élargi à 25 km pour trouver un passage · ' : '') + `Spirale ${Math.round(100 * tSpi / r.tempsTotal)} % du temps (${mo.length} spirales, ${(gSpi / Math.max(1, tSpi)).toFixed(1)} m/s) · cheminement +${Math.round(E.reduce((a, e) => a + e.gain, 0))} m · ${E.filter(e => e.passage).length} contournements · ${Math.round(r.hauteurMini)} m mini au-dessus du sol`;
+    $('r-detail').textContent = (r.plafondsReleves ? `⚠ Plafonds relevés de ${r.plafondsReleves.de} m pour atteindre ${r.plafondsReleves.points.map(t => t.nom).join(', ')} · ` : '') + (r.couloirElargi ? 'Couloir élargi à 25 km pour trouver un passage · ' : '') + `Spirale ${Math.round(100 * tSpi / r.tempsTotal)} % du temps (${mo.length} spirales, ${(gSpi / Math.max(1, tSpi)).toFixed(1)} m/s) · cheminement +${Math.round(E.reduce((a, e) => a + e.gain, 0))} m · ${E.filter(e => e.passage).length} contournements · ${Math.round(r.hauteurMini)} m mini au-dessus du sol`;
     // tableau par branche
     const T = etat.D.tache, n = T.length - 1, br = tempsBranches(r);
     let html = '<thead><tr><th>Jusqu\'à</th><th>km</th><th>Temps</th><th>km/h</th><th>Spirale</th><th>Chem.</th><th>Alt.</th></tr></thead><tbody>';
@@ -575,7 +580,7 @@
     $('r-branches').innerHTML = html + '</tbody>';
     dessinerProfil(r);
     $('p-igc').disabled = false;
-    etatTexte(`Calcul fait en ${r.dureeCalcul.toFixed(1)} s (${r.nbPoints.toLocaleString('fr-FR')} points, dont ${r.nbPassage} de contournement).`);
+    etatTexte(`Calcul fait en ${r.dureeCalcul.toFixed(1)} s (${r.nbPoints.toLocaleString('fr-FR')} points, dont ${r.nbPassage} de contournement).` + (r.plafondsReleves ? ` ⚠ Plafonds relevés de ${r.plafondsReleves.de} m : ${r.plafondsReleves.points.map(t => t.nom).join(', ')} trop haut pour les plafonds réglés.` : ''));
   }
   function distKm(a, b) {
     const k = Math.PI / 180, dLa = (b.lat - a.lat) * k, dLo = (b.lon - a.lon) * k;

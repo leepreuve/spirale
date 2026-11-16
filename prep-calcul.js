@@ -21,6 +21,27 @@ self.onmessage = (e) => {
         r = calculer(C, { ...m.P, couloir: 25 }, m.zones, m.exclusions || []);
         r.couloirElargi = true;
       }
+      if (!r.ok) {                               // toujours rien : un point est-il trop haut pour les plafonds ?
+        const plaf = melangeZones(m.zones, 'plafond'), D = C.D, marge = m.P.margeSol || 150;
+        const trop = [];
+        for (const t of D.tache) {
+          let mini = Infinity;                   // sol le plus bas dans le cylindre (centre + cercles)
+          for (const f of [0, 0.5, 0.95]) for (let a = 0; a < 16; a++) {
+            const d = t.rayon * f, la = t.lat + d * Math.cos(a * Math.PI / 8) / 111195, lo = t.lon + d * Math.sin(a * Math.PI / 8) / (111195 * Math.cos(t.lat * Math.PI / 180));
+            mini = Math.min(mini, sol(C.relief, la, lo));
+          }
+          const besoin = mini + marge, dispo = plaf(t.lat, t.lon);
+          if (besoin > dispo - 300) trop.push({ nom: t.nom, besoin: Math.round(besoin), plafond: Math.round(dispo) });
+        }
+        if (trop.length) {
+          progression(`Aucun trajet : ${trop.map(t => t.nom).join(', ')} trop haut pour les plafonds réglés. Essai avec les plafonds relevés…`);
+          const haut = Math.max(...trop.map(t => t.besoin - t.plafond)) + 500;
+          const z2 = m.zones.map(z => ({ ...z, plafond: z.plafond + haut }));
+          const r2 = calculer(C, { ...m.P, couloir: 25 }, z2, m.exclusions || []);
+          if (r2.ok) { r = r2; r.couloirElargi = true; }
+          r.plafondsReleves = { de: Math.round(haut), points: trop };
+        }
+      }
       r.dureeCalcul = (performance.now() - t0) / 1000;
       r.id = C.id;
       self.postMessage({ type: 'resultat', r });
