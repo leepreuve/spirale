@@ -217,6 +217,16 @@
     return { D, relief: Z.buffer };
   }
   const tachesPerso = lire('spirale-taches-perso', []) || [];
+  const meteoCircuits = lire('spirale-meteo-circuits', {}) || {};      // dernier .fpl chargé pour chaque circuit
+  const tachesSite = {};
+  async function circuitIdentique(t) {
+    for (const c of CIRCUITS) {
+      if (!tachesSite[c.id]) tachesSite[c.id] = await fetch(`prep/${c.id}/donnees.json?v=${VERSION}`).then(r => r.ok ? r.json() : null).then(D => D && D.tache).catch(() => null);
+      const T = tachesSite[c.id];
+      if (T && T.length === t.length && T.every((p, k) => Math.hypot((p.lat - t[k].lat) * 111.2, (p.lon - t[k].lon) * 78) < 1)) return c;
+    }
+    return null;
+  }
   tachesPerso.forEach(d => $('p-circuit').add(new Option('★ ' + d.titre, d.id)));
   $('p-tache').addEventListener('change', async (ev) => {
     const f = ev.target.files[0]; if (!f) return; ev.target.value = '';
@@ -224,15 +234,23 @@
       const buf = await f.arrayBuffer(), estFpl = /\.fpl$/i.test(f.name);
       const txt = estFpl ? new TextDecoder('latin1').decode(buf) : null;
       const def = estFpl ? lireTacheFpl(txt) : lireTacheFtr(buf);
-      def.id = 'perso_' + def.tache.map(p => p.lat.toFixed(3) + p.lon.toFixed(3)).join('').replace(/\D/g, '').slice(-24);
-      const i = tachesPerso.findIndex(d => d.id === def.id);
-      if (i >= 0) tachesPerso.splice(i, 1); else $('p-circuit').add(new Option('★ ' + def.titre, def.id));
-      tachesPerso.push(def); while (tachesPerso.length > 12) tachesPerso.shift();
-      ecrire('spirale-taches-perso', tachesPerso);
+      // la tâche correspond-elle à un circuit du site (mêmes points à 1 km près) ? on le reprend, avec sa carte IA
+      $('p-tache-info').textContent = 'Recherche d\'un circuit identique…';
+      const connu = await circuitIdentique(def.tache);
+      if (connu) def.id = connu.id;
+      else {
+        def.id = 'perso_' + def.tache.map(p => p.lat.toFixed(3) + p.lon.toFixed(3)).join('').replace(/\D/g, '').slice(-24);
+        const i = tachesPerso.findIndex(d => d.id === def.id);
+        if (i >= 0) tachesPerso.splice(i, 1); else $('p-circuit').add(new Option('★ ' + def.titre, def.id));
+        tachesPerso.push(def); while (tachesPerso.length > 12) tachesPerso.shift();
+        ecrire('spirale-taches-perso', tachesPerso);
+      }
+      if (estFpl) { meteoCircuits[def.id] = txt; ecrire('spirale-meteo-circuits', meteoCircuits); }
       $('p-circuit').value = def.id;
       const meteo = estFpl && appliquerMeteoFpl(txt, f.name);
-      $('p-tache-info').textContent = `${def.titre} : ${def.tache.length - 1} branches` + (meteo ? ', météo du plan de vol appliquée.' : (estFpl ? '.' : ' (le .ftr ne contient pas la météo : charge le .fpl pour la régler).'));
-      chargerCircuit(def.id);
+      $('p-tache-info').textContent = (connu ? `Circuit du site reconnu : ${connu.titre}` : `${def.titre} : ${def.tache.length - 1} branches`) +
+        (meteo ? ' · météo du plan de vol appliquée (elle sera remise à chaque sélection de ce circuit).' : (estFpl ? '.' : ' (le .ftr ne contient pas la météo : charge le .fpl pour la régler).'));
+      chargerCircuit(def.id, true);
     } catch (err) {
       $('p-tache-info').textContent = 'Impossible de lire cette tâche : ' + err.message;
     }
@@ -273,7 +291,12 @@
     etat.sel = etat.sel === b ? null : b;
     dessinerZones(); afficherZoneSel();
   });
-  $('p-circuit').addEventListener('change', () => chargerCircuit($('p-circuit').value));
+  $('p-circuit').addEventListener('change', () => {
+    const id = $('p-circuit').value;
+    if (meteoCircuits[id]) appliquerMeteoFpl(meteoCircuits[id], '');    // remet la météo de son plan de vol
+    else $('p-fpl-info').textContent = '';
+    chargerCircuit(id);
+  });
   $('p-calculer').addEventListener('click', () => calculer('nouveau'));
   $('p-autre').addEventListener('click', () => calculer('autre'));
   $('p-igc').addEventListener('click', telechargerIGC);
