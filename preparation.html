@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Spirale — préparation</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-  <link rel="stylesheet" href="style.css?v=20261116121513">
-  <link rel="stylesheet" href="prep.css?v=20261116121513">
-  <script src="acces.js?v=20261116121513"></script>
+  <link rel="stylesheet" href="style.css?v=20261116161020">
+  <link rel="stylesheet" href="prep.css?v=20261116161020">
+  <script src="acces.js?v=20261116161020"></script>
 </head>
 <body class="page-prep">
   <header class="barre">
@@ -54,7 +54,7 @@
       </section>
 
       <section>
-        <label class="case"><input type="checkbox" id="p-ia"> Utiliser la carte de l'IA</label>
+        <label class="case"><input type="checkbox" id="p-ia" checked> Utiliser la carte de l'IA (thermiques et cheminements)</label>
         <p id="p-ia-info" class="aide"></p>
       </section>
 
@@ -99,6 +99,7 @@
           <label class="curseur">Rayon d'aide de chaque thermique <output id="o-rayon"></output>
             <input type="range" id="p-rayon" min="200" max="1500" step="50" value="500"></label>
           <label class="case"><input type="checkbox" id="p-voir-cretes" checked> Afficher les crêtes sur la carte</label>
+          <label class="case"><input type="checkbox" id="p-voir-kk7"> Afficher les points kk7 (vrais vols, pas Condor)</label>
         </section>
         <section>
           <h2>Options de trajet</h2>
@@ -146,8 +147,8 @@
   </main>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="version.js?v=20261116121513"></script>
-  <script src="prep-zones.js?v=20261116121513"></script>
-  <script src="prep.js?v=20261116121513"></script>
+  <script src="version.js?v=20261116161020"></script>
+  <script src="prep-zones.js?v=20261116161020"></script>
+  <script src="prep.js?v=20261116161020"></script>
 </body>
 </html>

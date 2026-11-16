@@ -65,6 +65,9 @@
     });
   }
   $('p-voir-cretes').addEventListener('change', dessinerCretes);
+  $('p-voir-kk7').addEventListener('change', () => { if (etat.D) dessinerThermiquesBruts(); });
+  let iaVoulu = true;                                    // choix de l'utilisateur pour la case IA
+  $('p-ia').addEventListener('change', () => { iaVoulu = $('p-ia').checked; });
 
   // ----- cœurs de parcs nationaux (Écrins, Vanoise, Mercantour) et cheminements autorisés
   calques.parcs = L.layerGroup().addTo(carte);
@@ -322,10 +325,10 @@
       // carte IA des cheminements, si elle existe pour ce circuit
       etat.ia = perso ? null : await fetch(`prep/${id}/carte_ia.json?v=${VERSION}`).then(r => r.ok ? r.json() : null).catch(() => null);
       $('p-ia').disabled = !etat.ia;
-      if (!etat.ia) $('p-ia').checked = false;
+      $('p-ia').checked = !!etat.ia && iaVoulu;
       $('p-ia-info').textContent = etat.ia
         ? `Carte ${etat.ia.meteo.modele ? '(' + etat.ia.meteo.modele + ') ' : ''}calculée pour : vent du ${Math.round(etat.ia.meteo.vent_dir)}° ${Math.round(etat.ia.meteo.vent_kmh)} km/h, plafond ${Math.round(etat.ia.meteo.plafond_m)} m, thermiques ${etat.ia.meteo.vz_moyen.toFixed(1)} m/s${etat.ia.meteo.defaut ? ' (météo par défaut : pas de course connue sur ce circuit)' : ''}.`
-        : 'Pas de carte IA pour ce circuit (il faut des vols Condor de ce circuit).';
+        : 'Pas de carte IA pour cette tâche : les thermiques viennent de kk7 (vrais vols), moins fiables dans Condor.';
       etat.zonesBase = genererZonesVol(D, relief);
       etat.corrections = lire('spirale-prep-corr-' + id, {}) || {};
       etat.sel = null;
@@ -531,8 +534,9 @@
     const f = Math.max(0, Math.min(1, (vz - 1) / Math.max(0.5, vmax - 1)));
     return `hsl(${Math.round(55 - 55 * f)}, 95%, ${Math.round(55 - 8 * f)}%)`;   // jaune -> rouge
   }
-  function dessinerThermiquesBruts() {   // avant calcul : kk7 colorés par intensité
+  function dessinerThermiquesBruts() {   // avant calcul : kk7 colorés par intensité (seulement si demandé)
     calques.thermiques.clearLayers();
+    if (!$('p-voir-kk7').checked) return;
     const r = L.canvas({ padding: 0.3 });
     const pmax = Math.max(...etat.D.kk7.map(t => t[2]));
     etat.D.kk7.forEach(([la, lo, p]) => L.circleMarker([la, lo], { renderer: r, radius: 3, stroke: false, fillColor: couleurVz(1 + 3 * p / pmax, 4), fillOpacity: 0.75, interactive: false }).addTo(calques.thermiques));

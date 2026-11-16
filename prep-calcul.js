@@ -172,10 +172,24 @@ function calculer(C, P, zones, exclusions = []) {
   // cœurs de parcs nationaux : survol à 1000 m/sol minimum, sauf dans les cheminements autorisés
   const parcs = P.parcs ? P.parcs.filter(p => p.role === 'outer') : [];
   const terr = analyserTerrain(rel);
-  for (const [la, lo, p] of D.kk7) {
+  // thermiques : ceux de l'IA (probabilité apprise sur les vols Condor) si sa carte est fournie, sinon kk7
+  let sourceTh = D.kk7, pRefTh = pRef;
+  if (P.ia && P.ia.proba) {
+    const G = P.ia.proba, ny = G.length, nx = G[0].length, tous = [];
+    for (let i = 0; i < ny; i++) for (let j = 0; j < nx; j++) tous.push(G[i][j]);
+    const seuil = quantile(tous, 0.8); pRefTh = quantile(tous, 0.98); sourceTh = [];
+    for (let i = 0; i < ny; i++) for (let j = 0; j < nx; j++) {
+      const p = G[i][j]; if (p < seuil) continue;
+      let max = true;                                   // maximum local (cases voisines à 600 m)
+      for (let a = -1; a <= 1 && max; a++) for (let b = -1; b <= 1; b++)
+        if ((a || b) && i + a >= 0 && j + b >= 0 && i + a < ny && j + b < nx && G[i + a][j + b] > p) { max = false; break; }
+      if (max) sourceTh.push([P.ia.lat0 + i * P.ia.pas_m / P.ia.ky, P.ia.lon0 + j * P.ia.pas_m / P.ia.kx, p]);
+    }
+  }
+  for (const [la, lo, p] of sourceTh) {
     lat.push(la); lon.push(lo); src.push(1);
-    vz.push(P.vzMin + (vzMaxZ(la, lo) - P.vzMin) * Math.min(1, p / pRef));
-    pAct.push(Math.min(1, p / pRef));
+    vz.push(P.vzMin + (vzMaxZ(la, lo) - P.vzMin) * Math.min(1, p / pRefTh));
+    pAct.push(Math.min(1, p / pRefTh));
   }
   for (const [la, lo] of D.fond) { lat.push(la); lon.push(lo); vz.push(P.vzFond); pAct.push(0.5); src.push(2); }
   for (const [la, lo, s] of D.passage) {
@@ -188,7 +202,7 @@ function calculer(C, P, zones, exclusions = []) {
   const cretes = valeursCretes(terr, rel, soleil, vent, P, vzMaxZ, plafond);
   const kk7Proche = (la, lo) => {     // kk7 a déjà un thermique à moins de 1,5 km : on ne double pas
     const k = Math.cos(la * Math.PI / 180);
-    for (let i = M; i < M + D.kk7.length; i++) if (Math.abs(lat[i] - la) < 0.0135 && Math.hypot((lat[i] - la) * 111.2, (lon[i] - lo) * 111.2 * k) < 1.5) return true;
+    for (let i = M; i < M + sourceTh.length; i++) if (Math.abs(lat[i] - la) < 0.0135 && Math.hypot((lat[i] - la) * 111.2, (lon[i] - lo) * 111.2 * k) < 1.5) return true;
     return false;
   };
   for (const c of cretes) {
