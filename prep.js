@@ -95,6 +95,7 @@
   const curseurs = {
     marge: ['p-marge', 'o-marge', v => `${v} m`],
     mc: ['p-mc', 'o-mc', v => `${(+v).toFixed(1)} m/s`],
+    centrage: ['p-centrage', 'o-centrage', v => +v ? `${v} s par pompe` : 'aucun'],
     eff: ['p-eff', 'o-eff', v => `${Math.round(v * 100)} %`],
     rayon: ['p-rayon', 'o-rayon', v => `${v} m`],
     vdir: ['p-vdir', 'o-vdir', v => `${v}° (${['N', 'NE', 'E', 'SE', 'S', 'SO', 'O', 'NO'][Math.round(v / 45) % 8]})`],
@@ -457,7 +458,7 @@
         margeSol: +$('p-marge').value, mc: +$('p-mc').value, efficacite: +$('p-eff').value, rayon: +$('p-rayon').value,
         vzMin: 1.0, vzFond: 1.5, couloir: 15, portee: 20,
         parcs: $('p-sansparcs').checked ? [] : etat.parcs, couloirs: etat.couloirs,
-        ballast: $('p-ballast').checked ? 1.18 : 1,
+        ballast: $('p-ballast').checked ? 1.18 : 1, tCentrage: +$('p-centrage').value,
         ia: $('p-ia').checked && etat.ia ? etat.ia : null,
         ventDir: +$('p-vdir').value, ventKmh: +$('p-vkmh').value,
         poidsCretes: +$('p-cretes').value, effPente: +$('p-pente').value, sousVent: +$('p-svent').value,

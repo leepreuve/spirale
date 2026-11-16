@@ -363,13 +363,14 @@ function calculer(C, P, zones, exclusions = []) {
   }
   const nLoc = loc.map(a => a.length);
   const offset = [0]; for (let L = 0; L < nC; L++) offset.push(offset[L] + nLoc[L] * nL);
-  const S = offset[nC], sFin = S;
+  // deux copies des états : [0, S) = arrivé en transition, [S, 2S) = en train de spiraler (pompe déjà centrée)
+  const S = offset[nC], sFin = 2 * S, tCentrage = P.tCentrage ?? 25;
   progression(`${NG - M} points, ${S.toLocaleString('fr-FR')} états`);
-  const T = new Float64Array(S + 1).fill(Infinity), prec = new Int32Array(S + 1).fill(-1);
-  const fait = new Uint8Array(S + 1), modeV = new Uint8Array(S + 1);
+  const T = new Float64Array(2 * S + 1).fill(Infinity), prec = new Int32Array(2 * S + 1).fill(-1);
+  const fait = new Uint8Array(2 * S + 1), modeV = new Uint8Array(2 * S + 1);
   const cache = loc.map(a => new Array(a.length));
   // dominance : à un même nœud, un état plus haut atteint plus tôt fait au moins aussi bien
-  const hautMax = loc.map(a => new Int16Array(a.length).fill(-1));
+  const hautMax = loc.map(a => new Int16Array(a.length).fill(-1)), hautMax1 = loc.map(a => new Int16Array(a.length).fill(-1));
 
   let l0 = 0; for (let l = 0; l < nL; l++) if (h[l] <= hDepart) l0 = l;
   const s0 = offset[0] + l0 * nLoc[0] + 0;
@@ -384,16 +385,20 @@ function calculer(C, P, zones, exclusions = []) {
     fait[s] = 1;
     if (s === sFin) break;
     if (++nExp % 50000 === 0) progression(`Calcul… ${Math.round(t / 60)} min de vol explorées`);
-    let L = 0; while (s >= offset[L + 1]) L++;
-    const r = s - offset[L], l = Math.floor(r / nLoc[L]), j = r - l * nLoc[L];
+    const enPompe = s >= S, sb = enPompe ? s - S : s;
+    let L = 0; while (sb >= offset[L + 1]) L++;
+    const r = sb - offset[L], l = Math.floor(r / nLoc[L]), j = r - l * nLoc[L];
     const g = loc[L][j];
-    if (hautMax[L][j] >= l) continue;                     // déjà passé ici plus haut et plus tôt
-    hautMax[L][j] = l;
+    // déjà passé ici plus haut et plus tôt (un état « en pompe » n'est battu que par un autre état en pompe)
+    if (enPompe ? hautMax1[L][j] >= l : hautMax[L][j] >= l) continue;
+    if (hautMax[L][j] < l) hautMax[L][j] = l;
+    if (enPompe && hautMax1[L][j] < l) hautMax1[L][j] = l;
 
     // monter d'un palier
     if (vz[g] > 0 && l < nL - 1 && h[l + 1] <= plafG[g]) {
       const vzEff = vz[g] * Math.max(0.4, Math.min(1, (plafG[g] - h[l]) / 400));
-      relax(s + nLoc[L], t + pasAlt / vzEff, s, 0);
+      // nouvelle pompe : temps perdu à l'entrée, au centrage et à la sortie (payé une seule fois par pompe)
+      relax(sb + nLoc[L] + S, t + pasAlt / vzEff + (enPompe ? 0 : tCentrage), s, 0);
     }
 
     // cibles et altitudes requises (une fois par nœud et par branche)
@@ -481,7 +486,7 @@ function calculer(C, P, zones, exclusions = []) {
   chemin.reverse();
   const noeud = [], niv = [];
   for (let k = 0; k < chemin.length - 1; k++) {
-    const sk = chemin[k]; let L = 0; while (sk >= offset[L + 1]) L++;
+    const sk = chemin[k] >= S ? chemin[k] - S : chemin[k]; let L = 0; while (sk >= offset[L + 1]) L++;
     const r = sk - offset[L], l = Math.floor(r / nLoc[L]), j = r - l * nLoc[L];
     noeud.push(loc[L][j]); niv.push(l);
   }
