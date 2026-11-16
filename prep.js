@@ -13,6 +13,7 @@
     { id: 'tache_cdf_qualif2', titre: 'Veynes → Challes (CdF 2025 Qualif 2)', meteo: { vdir: 290, vkmh: 15, pmax: 3750, pmin: 3150, vz: 4.0, src: 'CDF2025_Qualif_2A_-_2_CC.fpl' } },
     { id: 'tache_vsc_gap_192', titre: 'Gap-Tallard 192 km (VSC, vent du nord)', meteo: { vdir: 0, vkmh: 31, pmax: 3500, pmin: 3500, vz: 4.6, src: 'VSC_AA3_GapTallard_192km_STD_CC.fpl' } },
     { id: 'tache_vsc_gap_viso', titre: 'Gap-Tallard → Viso → Serres 214 km (VSC 18 m)', meteo: { vdir: 300, vkmh: 25, pmax: 3650, pmin: 3650, vz: 4.0, src: 'VSC_AA3_Gap_18m_214km_CC.fpl' } },
+    { id: 'tache_coyote_suisse', titre: 'Emmen → Schallenberg → Susten → Dagmersellen (Vol du Coyote, Suisse)', meteo: { vdir: 125, vkmh: 12, pmax: 2750, pmin: 2750, vz: 3.4, src: 'Le_Vol_du_Coyote_151126_CC.fpl' } },
   ];
   const $ = (id) => document.getElementById(id);
   const VERSION = (window.SPIRALE_VERSION || {}).numero || Date.now();   // évite les données en cache d'une ancienne version
@@ -132,6 +133,11 @@
       const v = k => { const m = b.match(new RegExp('^' + k + '=([-0-9.]+)', 'm')); return m ? +m[1] : NaN; };
       return { dir: v('WindDir'), vit: v('WindSpeed'), force: v('ThermalsStrength'), inv: v('ThermalsInversionheight') };
     }).filter(z => isFinite(z.inv));
+    if (!zonesM.length) {   // pas de [WeatherZone] : météo unique en tête du fichier
+      const v = k => { const m = txt.match(new RegExp('^' + k + '=([-0-9.]+)', 'm')); return m ? +m[1] : NaN; };
+      const z = { dir: v('WindDir'), vit: v('WindSpeed'), force: v('ThermalsStrength'), inv: v('ThermalsInversionheight') };
+      if (isFinite(z.inv)) zonesM.push(z);
+    }
     if (!zonesM.length) { $('p-fpl-info').textContent = 'Pas de météo trouvée dans ce fichier.'; return false; }
     const base = zonesM[0], invs = zonesM.map(z => z.inv);
     const regle = (id, v) => { const el = $(id); el.value = Math.max(+el.min, Math.min(+el.max, v)); el.dispatchEvent(new Event('input')); };
