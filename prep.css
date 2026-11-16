@@ -117,3 +117,6 @@
 .avance { border-top: 1px solid var(--bord, #d8dde6); padding-top: 8px; }
 .avance > summary { cursor: pointer; font-weight: 600; padding: 6px 0; color: var(--texte-2, #5b6472); }
 .avance > section { margin-top: 10px; }
+
+.meteo-resume { margin: 4px 0 6px; line-height: 1.6; font-size: 14px; }
+.meteo-resume b { display: inline-block; min-width: 92px; color: var(--texte-2, #5b6472); font-weight: 600; }

@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Spirale — préparation</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-  <link rel="stylesheet" href="style.css?v=20261116161020">
-  <link rel="stylesheet" href="prep.css?v=20261116161020">
-  <script src="acces.js?v=20261116161020"></script>
+  <link rel="stylesheet" href="style.css?v=20261116162114">
+  <link rel="stylesheet" href="prep.css?v=20261116162114">
+  <script src="acces.js?v=20261116162114"></script>
 </head>
 <body class="page-prep">
   <header class="barre">
@@ -36,7 +36,10 @@
       </section>
 
       <section>
-        <h2>Météo</h2>
+        <h2>Météo du plan de vol</h2>
+        <p id="p-meteo-resume" class="meteo-resume"></p>
+        <p id="p-fpl-info" class="aide"></p>
+        <div hidden>
         <label class="curseur">Vent venant du <output id="o-vdir"></output>
           <input type="range" id="p-vdir" min="0" max="355" step="5" value="225"></label>
         <label class="curseur">Force du vent <output id="o-vkmh"></output>
@@ -47,10 +50,7 @@
           <input type="range" id="p-pmin" min="1000" max="4500" step="50" value="1800"></label>
         <label class="curseur">Force des thermiques <output id="o-vz"></output>
           <input type="range" id="p-vz" min="1" max="6" step="0.1" value="3.2"></label>
-        <label class="curseur">Temps perdu à chaque pompe <output id="o-centrage"></output>
-          <input type="range" id="p-centrage" min="0" max="60" step="5" value="20"></label>
-        <p class="aide">Entrée, centrage et sortie : environ 20 s par pompe d'après tes 44 vols. Plus c'est haut, moins le trajet prend de petites pompes.</p>
-        <p id="p-fpl-info" class="aide"></p>
+        </div>
       </section>
 
       <section>
@@ -72,6 +72,9 @@
           <label class="case"><input type="checkbox" id="p-sansparcs" checked> Condor : pas d'interdiction de parcs nationaux</label>
           <label class="curseur">Marge au-dessus du relief <output id="o-marge"></output>
             <input type="range" id="p-marge" min="50" max="400" step="10" value="150"></label>
+        <label class="curseur">Temps perdu à chaque pompe <output id="o-centrage"></output>
+          <input type="range" id="p-centrage" min="0" max="60" step="5" value="20"></label>
+        <p class="aide">Entrée, centrage et sortie : environ 20 s par pompe d'après tes 44 vols. Plus c'est haut, moins le trajet prend de petites pompes.</p>
           <label class="curseur">MacCready <output id="o-mc"></output>
             <input type="range" id="p-mc" min="0" max="4" step="0.1" value="2.5"></label>
         </section>
@@ -107,11 +110,7 @@
             <select id="p-branche" aria-label="Partie du circuit à faire varier"></select></label>
           <button id="p-autre" class="btn" type="button" disabled>Proposer une option B</button>
         </section>
-        <section>
-          <h2>Météo seule</h2>
-          <label class="btn fichier">Régler la météo depuis un .fpl
-            <input type="file" id="p-fpl" accept=".fpl" hidden></label>
-        </section>
+        <input type="file" id="p-fpl" accept=".fpl" hidden>
       </details>
     </aside>
 
@@ -147,8 +146,8 @@
   </main>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="version.js?v=20261116161020"></script>
-  <script src="prep-zones.js?v=20261116161020"></script>
-  <script src="prep.js?v=20261116161020"></script>
+  <script src="version.js?v=20261116162114"></script>
+  <script src="prep-zones.js?v=20261116162114"></script>
+  <script src="prep.js?v=20261116162114"></script>
 </body>
 </html>

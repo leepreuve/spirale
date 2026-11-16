@@ -4,15 +4,15 @@
   'use strict';
 
   const CIRCUITS = [
-    { id: 'tache_greoux_saintauban', titre: 'Gréoux → Saint-Auban' },
+    { id: 'tache_greoux_saintauban', titre: 'Gréoux → Saint-Auban', meteo: { vdir: 225, vkmh: 8, pmax: 3300, pmin: 1800, vz: 3.2, src: 'course Condor Club (pas de .fpl)' } },
     { id: 'tache_versoud_barcelonnette', titre: 'Le Versoud → Barcelonnette' },
-    { id: 'tache_stjean_challes', titre: 'St Jean → Challes' },
+    { id: 'tache_stjean_challes', titre: 'St Jean → Challes', meteo: { vdir: 285, vkmh: 17, pmax: 3450, pmin: 2000, vz: 4.0, src: 'CDF2025-Epreuve_1_CC.fpl' } },
     { id: 'test_stcrepin_saintauban', titre: 'St Crépin → Saint-Auban' },
     { id: 'tache_versoud_aubenasson', titre: 'Le Versoud → Aubenasson (CdF J1R3)' },
-    { id: 'tache_gap_fayence', titre: 'Gap-Tallard → Fayence (CdF 2025 É4)' },
-    { id: 'tache_cdf_qualif2', titre: 'Veynes → Challes (CdF 2025 Qualif 2)' },
-    { id: 'tache_vsc_gap_192', titre: 'Gap-Tallard 192 km (VSC, vent du nord)' },
-    { id: 'tache_vsc_gap_viso', titre: 'Gap-Tallard → Viso → Serres 214 km (VSC 18 m)' },
+    { id: 'tache_gap_fayence', titre: 'Gap-Tallard → Fayence (CdF 2025 É4)', meteo: { vdir: 295, vkmh: 16, pmax: 3400, pmin: 2800, vz: 4.0, src: 'CDF2025-Epreuve_4_CC.fpl' } },
+    { id: 'tache_cdf_qualif2', titre: 'Veynes → Challes (CdF 2025 Qualif 2)', meteo: { vdir: 290, vkmh: 15, pmax: 3750, pmin: 3150, vz: 4.0, src: 'CDF2025_Qualif_2A_-_2_CC.fpl' } },
+    { id: 'tache_vsc_gap_192', titre: 'Gap-Tallard 192 km (VSC, vent du nord)', meteo: { vdir: 0, vkmh: 31, pmax: 3500, pmin: 3500, vz: 4.6, src: 'VSC_AA3_GapTallard_192km_STD_CC.fpl' } },
+    { id: 'tache_vsc_gap_viso', titre: 'Gap-Tallard → Viso → Serres 214 km (VSC 18 m)', meteo: { vdir: 300, vkmh: 25, pmax: 3650, pmin: 3650, vz: 4.0, src: 'VSC_AA3_Gap_18m_214km_CC.fpl' } },
   ];
   const $ = (id) => document.getElementById(id);
   const VERSION = (window.SPIRALE_VERSION || {}).numero || Date.now();   // évite les données en cache d'une ancienne version
@@ -141,7 +141,7 @@
     regle('p-pmin', Math.round(Math.max(Math.min(...invs), 1500) / 50) * 50);
     if (isFinite(base.force)) regle('p-vz', 2.8 + 0.6 * base.force);
     const nom = (txt.match(/^TaskName=(.*)$/m) || [, nomFichier])[1].trim();
-    $('p-fpl-info').textContent = `${nom} : vent du ${Math.round(base.dir)}° ${Math.round(base.vit * 3.6)} km/h, plafonds ${Math.round(Math.min(...invs))}–${Math.round(Math.max(...invs))} m, force ${base.force} (${zonesM.length} zone${zonesM.length > 1 ? 's' : ''} météo). Relance le calcul.`;
+    $('p-fpl-info').textContent = `${nom} : vent du ${Math.round(base.dir)}° ${Math.round(base.vit * 3.6)} km/h, plafonds ${Math.round(Math.min(...invs))}–${Math.round(Math.max(...invs))} m, force ${base.force} (${zonesM.length} zone${zonesM.length > 1 ? 's' : ''} météo).`;
     return true;
   }
 
@@ -294,10 +294,25 @@
     etat.sel = etat.sel === b ? null : b;
     dessinerZones(); afficherZoneSel();
   });
+  // Météo : non modifiable à la main. Elle vient du dernier plan de vol chargé pour ce circuit,
+  // sinon de la course connue du circuit, sinon d'une météo neutre (et on le dit).
+  const METEO_NEUTRE = { vdir: 270, vkmh: 0, pmax: 3300, pmin: 1800, vz: 3.2 };
+  function regler(id, v) { const el = $(id); el.value = Math.max(+el.min, Math.min(+el.max, v)); el.dispatchEvent(new Event('input')); }
+  function meteoDuCircuit(id) {
+    if (meteoCircuits[id]) { appliquerMeteoFpl(meteoCircuits[id], ''); return; }
+    const c = CIRCUITS.find(x => x.id === id), m = (c && c.meteo) || METEO_NEUTRE;
+    regler('p-vdir', m.vdir); regler('p-vkmh', m.vkmh); regler('p-pmax', m.pmax); regler('p-pmin', m.pmin); regler('p-vz', m.vz);
+    $('p-fpl-info').textContent = c && c.meteo ? `Météo de la course : ${c.meteo.src}.` : 'Pas de plan de vol pour ce circuit : météo neutre. Charge le .fpl de la course pour avoir la vraie météo.';
+  }
+  function majResumeMeteo() {
+    const d = +$('p-vdir').value, k = +$('p-vkmh').value;
+    $('p-meteo-resume').innerHTML = `<b>Vent</b> ${k ? `${d}° (${['N', 'NE', 'E', 'SE', 'S', 'SO', 'O', 'NO'][Math.round(d / 45) % 8]}) ${k} km/h` : 'nul'}<br>` +
+      `<b>Plafond</b> ${$('p-pmin').value} m en plaine → ${$('p-pmax').value} m en montagne<br><b>Thermiques</b> jusqu'à ${(+$('p-vz').value).toFixed(1)} m/s`;
+  }
+  ['p-vdir', 'p-vkmh', 'p-pmax', 'p-pmin', 'p-vz'].forEach(i => $(i).addEventListener('input', majResumeMeteo));
   $('p-circuit').addEventListener('change', () => {
     const id = $('p-circuit').value;
-    if (meteoCircuits[id]) appliquerMeteoFpl(meteoCircuits[id], '');    // remet la météo de son plan de vol
-    else $('p-fpl-info').textContent = '';
+    meteoDuCircuit(id);
     chargerCircuit(id);
   });
   $('p-calculer').addEventListener('click', () => calculer('nouveau'));
@@ -733,5 +748,6 @@
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   }
 
+  meteoDuCircuit(CIRCUITS[0].id); majResumeMeteo();
   chargerCircuit(CIRCUITS[0].id);
 })();
