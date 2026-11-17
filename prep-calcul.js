@@ -33,9 +33,10 @@ self.onmessage = (e) => {
           const besoin = mini + marge, dispo = plaf(t.lat, t.lon);
           if (besoin > dispo - 300) trop.push({ nom: t.nom, besoin: Math.round(besoin), plafond: Math.round(dispo) });
         }
-        if (trop.length) {
-          progression(`Aucun trajet : ${trop.map(t => t.nom).join(', ')} trop haut pour les plafonds réglés. Essai avec les plafonds relevés…`);
-          const haut = Math.max(...trop.map(t => t.besoin - t.plafond)) + 500;
+        {   // un point trop haut, ou un sommet dans un petit cylindre (ex. Viso) : on relève les plafonds
+          progression(trop.length ? `Aucun trajet : ${trop.map(t => t.nom).join(', ')} trop haut pour les plafonds réglés. Essai avec les plafonds relevés…`
+                                  : 'Aucun trajet : essai avec les plafonds relevés de 500 m…');
+          const haut = trop.length ? Math.max(...trop.map(t => t.besoin - t.plafond)) + 500 : 500;
           const z2 = m.zones.map(z => ({ ...z, plafond: z.plafond + haut }));
           const r2 = calculer(C, { ...m.P, couloir: 25 }, z2, m.exclusions || []);
           if (r2.ok) { r = r2; r.couloirElargi = true; }
@@ -248,7 +249,8 @@ function calculer(C, P, zones, exclusions = []) {
     for (let i = 0; i < NY; i++) for (let j = 0; j < NX; j++) {
       const la = la0 + (GY0 + i * 100) / ky, lo = lo0 + (GX0 + j * 100) / kx;
       const gi = Math.round((la - IA.lat0) * IA.ky / IA.pas_m), gj = Math.round((lo - IA.lon0) * IA.kx / IA.pas_m);
-      PHI[i * NX + j] = gi >= 0 && gj >= 0 && gi < ny && gj < nx ? G[gi][gj] : 0;
+      // calage sur les vols : la carte prévoit trop haut là où elle est maximale (le trajet y va justement) -> coefficient iaK
+      PHI[i * NX + j] = gi >= 0 && gj >= 0 && gi < ny && gj < nx ? (P.iaB ?? 0) + (P.iaK ?? 1) * G[gi][gj] : 0;
     }
   }
   // descendance sous le vent : pentes abritées du vent (négatif dans la carte d'ascendance)

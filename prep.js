@@ -6,14 +6,14 @@
   const CIRCUITS = [
     { id: 'tache_greoux_saintauban', titre: 'Gréoux → Saint-Auban', meteo: { vdir: 225, vkmh: 8, pmax: 3300, pmin: 1800, vz: 3.2, src: 'course Condor Club (pas de .fpl)' } },
     { id: 'tache_versoud_barcelonnette', titre: 'Le Versoud → Barcelonnette' },
-    { id: 'tache_stjean_challes', titre: 'St Jean → Challes', meteo: { vdir: 285, vkmh: 17, pmax: 3450, pmin: 2000, vz: 4.0, src: 'CDF2025-Epreuve_1_CC.fpl' } },
+    { id: 'tache_stjean_challes', titre: 'St Jean → Challes', meteo: { vdir: 285, vkmh: 17, pmax: 3450, pmin: 2000, vz: 3.7, src: 'CDF2025-Epreuve_1_CC.fpl' } },
     { id: 'test_stcrepin_saintauban', titre: 'St Crépin → Saint-Auban' },
     { id: 'tache_versoud_aubenasson', titre: 'Le Versoud → Aubenasson (CdF J1R3)' },
-    { id: 'tache_gap_fayence', titre: 'Gap-Tallard → Fayence (CdF 2025 É4)', meteo: { vdir: 295, vkmh: 16, pmax: 3400, pmin: 2800, vz: 4.0, src: 'CDF2025-Epreuve_4_CC.fpl' } },
-    { id: 'tache_cdf_qualif2', titre: 'Veynes → Challes (CdF 2025 Qualif 2)', meteo: { vdir: 290, vkmh: 15, pmax: 3750, pmin: 3150, vz: 4.0, src: 'CDF2025_Qualif_2A_-_2_CC.fpl' } },
-    { id: 'tache_vsc_gap_192', titre: 'Gap-Tallard 192 km (VSC, vent du nord)', meteo: { vdir: 0, vkmh: 31, pmax: 3500, pmin: 3500, vz: 4.6, src: 'VSC_AA3_GapTallard_192km_STD_CC.fpl' } },
-    { id: 'tache_vsc_gap_viso', titre: 'Gap-Tallard → Viso → Serres 214 km (VSC 18 m)', meteo: { vdir: 300, vkmh: 25, pmax: 3650, pmin: 3650, vz: 4.0, src: 'VSC_AA3_Gap_18m_214km_CC.fpl' } },
-    { id: 'tache_coyote_suisse', titre: 'Emmen → Schallenberg → Susten → Dagmersellen (Vol du Coyote, Suisse)', meteo: { vdir: 125, vkmh: 12, pmax: 2750, pmin: 2750, vz: 3.4, src: 'Le_Vol_du_Coyote_151126_CC.fpl' } },
+    { id: 'tache_gap_fayence', titre: 'Gap-Tallard → Fayence (CdF 2025 É4)', meteo: { vdir: 295, vkmh: 16, pmax: 3400, pmin: 2800, vz: 3.7, src: 'CDF2025-Epreuve_4_CC.fpl' } },
+    { id: 'tache_cdf_qualif2', titre: 'Veynes → Challes (CdF 2025 Qualif 2)', meteo: { vdir: 290, vkmh: 15, pmax: 3750, pmin: 3150, vz: 3.7, src: 'CDF2025_Qualif_2A_-_2_CC.fpl' } },
+    { id: 'tache_vsc_gap_192', titre: 'Gap-Tallard 192 km (VSC, vent du nord)', meteo: { vdir: 0, vkmh: 31, pmax: 3500, pmin: 3500, vz: 5.5, src: 'VSC_AA3_GapTallard_192km_STD_CC.fpl' } },
+    { id: 'tache_vsc_gap_viso', titre: 'Gap-Tallard → Viso → Serres 214 km (VSC 18 m)', meteo: { vdir: 300, vkmh: 25, pmax: 3650, pmin: 3650, vz: 3.7, src: 'VSC_AA3_Gap_18m_214km_CC.fpl' } },
+    { id: 'tache_coyote_suisse', titre: 'Emmen → Schallenberg → Susten → Dagmersellen (Vol du Coyote, Suisse)', meteo: { vdir: 125, vkmh: 12, pmax: 2750, pmin: 2750, vz: 1.9, src: 'Le_Vol_du_Coyote_151126_CC.fpl' } },
   ];
   const $ = (id) => document.getElementById(id);
   const VERSION = (window.SPIRALE_VERSION || {}).numero || Date.now();   // évite les données en cache d'une ancienne version
@@ -145,7 +145,8 @@
     regle('p-vkmh', Math.round(base.vit * 3.6));
     regle('p-pmax', Math.round(Math.max(...invs) / 50) * 50);
     regle('p-pmin', Math.round(Math.max(Math.min(...invs), 1500) / 50) * 50);
-    if (isFinite(base.force)) regle('p-vz', 2.8 + 0.6 * base.force);
+    // calage V4.1 sur les montées réelles des meilleurs pilotes (6 courses avec .fpl) : force 1 → 1,9 m/s, 2 → 3,7, 3 → 5,5
+    if (isFinite(base.force)) regle('p-vz', 0.17 + 1.77 * base.force);
     const nom = (txt.match(/^TaskName=(.*)$/m) || [, nomFichier])[1].trim();
     $('p-fpl-info').textContent = `${nom} : vent du ${Math.round(base.dir)}° ${Math.round(base.vit * 3.6)} km/h, plafonds ${Math.round(Math.min(...invs))}–${Math.round(Math.max(...invs))} m, force ${base.force} (${zonesM.length} zone${zonesM.length > 1 ? 's' : ''} météo).`;
     return true;
@@ -507,6 +508,7 @@
         parcs: $('p-sansparcs').checked ? [] : etat.parcs, couloirs: etat.couloirs,
         ballast: $('p-ballast').checked ? 1.18 : 1, tCentrage: +$('p-centrage').value,
         ia: $('p-ia').checked && etat.ia ? etat.ia : null,
+        iaK: 0.85,   // calage V4.1 sur les 54 vols : la carte IA est trop optimiste là où le trajet va la chercher
         ventDir: +$('p-vdir').value, ventKmh: +$('p-vkmh').value,
         poidsCretes: +$('p-cretes').value, effPente: +$('p-pente').value, sousVent: +$('p-svent').value,
       },
@@ -612,14 +614,14 @@
       $('r-temps').textContent = 'Impossible';
       $('r-detail').textContent = 'Aucun trajet ne passe avec ces réglages : remonte le plafond sur les reliefs (ou corrige la zone d’un col haut), ou baisse la marge.';
       etatTexte(`Calcul fait en ${r.dureeCalcul.toFixed(1)} s — aucun trajet possible.` + (r.plafondsReleves
-        ? ` Point(s) trop haut(s) : ${r.plafondsReleves.points.map(t => `${t.nom} (il faut ${t.besoin} m, plafond ${t.plafond} m)`).join(', ')}.` : ' Essaie de monter les plafonds ou d\'élargir la marge.'), true);
+        ? (r.plafondsReleves.points.length ? ` Point(s) trop haut(s) : ${r.plafondsReleves.points.map(t => `${t.nom} (il faut ${t.besoin} m, plafond ${t.plafond} m)`).join(', ')}.` : ' Même avec les plafonds relevés de 500 m.') : ' Essaie de monter les plafonds ou d\'élargir la marge.'), true);
       return;
     }
     const E = r.etapes, mo = E.filter(e => e.type === 'M');
     const tSpi = mo.reduce((a, e) => a + e.duree, 0), gSpi = mo.reduce((a, e) => a + e.h2 - e.h1, 0);
     $('r-temps').textContent = hms(r.tempsTotal);
     $('r-vitesse').textContent = `${(r.distanceCircuit / (r.tempsTotal / 3600)).toFixed(1)} km/h · ${r.distanceCircuit.toFixed(1)} km`;
-    $('r-detail').textContent = (r.plafondsReleves ? `⚠ Plafonds relevés de ${r.plafondsReleves.de} m pour atteindre ${r.plafondsReleves.points.map(t => t.nom).join(', ')} · ` : '') + (r.couloirElargi ? 'Couloir élargi à 25 km pour trouver un passage · ' : '') + `Spirale ${Math.round(100 * tSpi / r.tempsTotal)} % du temps (${mo.length} spirales, ${(gSpi / Math.max(1, tSpi)).toFixed(1)} m/s) · cheminement +${Math.round(E.reduce((a, e) => a + e.gain, 0))} m · ${E.filter(e => e.passage).length} contournements · ${Math.round(r.hauteurMini)} m mini au-dessus du sol`;
+    $('r-detail').textContent = (r.plafondsReleves ? `⚠ Plafonds relevés de ${r.plafondsReleves.de} m` + (r.plafondsReleves.points.length ? ` pour atteindre ${r.plafondsReleves.points.map(t => t.nom).join(', ')}` : '') + ' · ' : '') + (r.couloirElargi ? 'Couloir élargi à 25 km pour trouver un passage · ' : '') + `Spirale ${Math.round(100 * tSpi / r.tempsTotal)} % du temps (${mo.length} spirales, ${(gSpi / Math.max(1, tSpi)).toFixed(1)} m/s) · cheminement +${Math.round(E.reduce((a, e) => a + e.gain, 0))} m · ${E.filter(e => e.passage).length} contournements · ${Math.round(r.hauteurMini)} m mini au-dessus du sol`;
     // tableau par branche
     const T = etat.D.tache, n = T.length - 1, br = tempsBranches(r);
     let html = '<thead><tr><th>Jusqu\'à</th><th>km</th><th>Temps</th><th>km/h</th><th>Spirale</th><th>Chem.</th><th>Alt.</th></tr></thead><tbody>';
@@ -630,7 +632,7 @@
     $('r-branches').innerHTML = html + '</tbody>';
     dessinerProfil(r);
     $('p-igc').disabled = false;
-    etatTexte(`Calcul fait en ${r.dureeCalcul.toFixed(1)} s (${r.nbPoints.toLocaleString('fr-FR')} points, dont ${r.nbPassage} de contournement).` + (r.plafondsReleves ? ` ⚠ Plafonds relevés de ${r.plafondsReleves.de} m : ${r.plafondsReleves.points.map(t => t.nom).join(', ')} trop haut pour les plafonds réglés.` : ''));
+    etatTexte(`Calcul fait en ${r.dureeCalcul.toFixed(1)} s (${r.nbPoints.toLocaleString('fr-FR')} points, dont ${r.nbPassage} de contournement).` + (r.plafondsReleves ? ` ⚠ Plafonds relevés de ${r.plafondsReleves.de} m` + (r.plafondsReleves.points.length ? ` : ${r.plafondsReleves.points.map(t => t.nom).join(', ')} trop haut pour les plafonds réglés.` : ' pour trouver un passage.') : ''));
   }
   function distKm(a, b) {
     const k = Math.PI / 180, dLa = (b.lat - a.lat) * k, dLo = (b.lon - a.lon) * k;
