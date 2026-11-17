@@ -102,7 +102,7 @@
     try {
       const meteo = $('p-meteo-resume').innerHTML.split('<br>').map(h => h.replace(/<[^>]+>/g, '').trim()).join(' · ');
       const nom = await window.SpiralePDF.generer({
-        D: etat.D, relief: etat.relief, options: etat.options, vue: etat.vue, LETTRES, COULEURS, hms,
+        D: etat.D, relief: etat.relief, options: etat.options, vue: etat.vue, LETTRES, COULEURS, hms, spirales: spiralesOptions(),
         version: 'V' + ((window.SPIRALE_VERSION || {}).numero || ''),
         sousTitre: `${meteo} · Diana 2${$('p-ballast').checked ? ' ballastée' : ''} · ${$('p-ia').checked && etat.ia ? 'carte IA' : 'thermiques kk7'}`,
       });
@@ -663,12 +663,32 @@
           .bindTooltip(`Traversé sans spiraler · +${Math.round(e.gain)} m`).addTo(calques.trajet);
       }
     });
-    r.etapes.filter(e => e.type === 'M').forEach(e => {
-      const vzm = (e.h2 - e.h1) / e.duree;
-      L.circleMarker([e.lat1, e.lon1], { radius: 8, color: '#d00', weight: 3, fill: false })
-        .bindTooltip(`+${vzm.toFixed(1)} m/s<br>${Math.round(e.h1)} → ${Math.round(e.h2)} m`, { permanent: true, direction: 'left', className: 'etq-spirale', offset: [-8, 0] })
+    // spirales de toutes les options : celles de l'option affichée en rouge, les autres dans la couleur de leur option.
+    // Un même thermique pris par plusieurs options n'a qu'un repère (étiquette « A1 = B1 »).
+    spiralesOptions().forEach(sp => {
+      const actif = sp.options.includes(etat.vue), i = sp.options[0], coul = actif ? '#d00' : COULEURS[i];
+      const tags = sp.tags.join(' = ');
+      const html = actif ? `<b>${tags}</b> · +${sp.vz.toFixed(1)} m/s<br>${Math.round(sp.h1)} → ${Math.round(sp.h2)} m`
+        : `<span style="color:${COULEURS[i]}"><b>${tags}</b> +${sp.vz.toFixed(1)}</span>`;
+      L.circleMarker([sp.lat, sp.lon], { radius: actif ? 8 : 6, color: coul, weight: actif ? 3 : 2.5, fill: false, dashArray: actif ? null : '3 2' })
+        .bindTooltip(html, { permanent: true, direction: 'left', className: actif ? 'etq-spirale' : 'etq-spirale autre', offset: [actif ? -8 : -6, 0] })
         .addTo(calques.trajet);
     });
+  }
+  // liste des spirales de toutes les options, regroupées quand elles tombent au même endroit (< 300 m)
+  function spiralesOptions() {
+    const L_ = [], ordre = [etat.vue, ...etat.options.map((o, i) => i).filter(i => i !== etat.vue)];
+    for (const i of ordre) {
+      const o = etat.options[i]; if (!o || !o.ok) continue;
+      let n = 0;
+      o.etapes.filter(e => e.type === 'M').forEach(e => {
+        n++; const tag = LETTRES[i] + n;
+        const m = L_.find(x => distKm({ lat: x.lat, lon: x.lon }, { lat: e.lat1, lon: e.lon1 }) < 0.3);
+        if (m) { m.tags.push(tag); m.options.push(i); }
+        else L_.push({ lat: e.lat1, lon: e.lon1, h1: e.h1, h2: e.h2, vz: (e.h2 - e.h1) / e.duree, tags: [tag], options: [i] });
+      });
+    }
+    return L_;
   }
 
   // ----- résultat

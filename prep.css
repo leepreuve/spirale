@@ -154,3 +154,5 @@
 .cl-option small { color: #5b6576; font-weight: 400; }
 .cl-autre { border: 1px solid #c9d2df; background: #fff; border-radius: 6px; padding: 3px 8px; font-size: 12px; cursor: pointer; color: #1c6fd6; margin-top: 2px; }
 .cl-autre:disabled { opacity: .5; cursor: default; }
+
+.etq-spirale.autre { font-size: 10.5px; padding: 0 3px; opacity: .95; }

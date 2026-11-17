@@ -161,17 +161,15 @@
         U.texte(LETTRES[i], m[0], m[1] + 0.05, { taille: 7.5, gras: true, halo: false, couleur: [255, 255, 255], align: 'center', base: 'middle' });
       }
     }
-    // spirales de l'option affichée : cercle rouge numéroté (détail page suivante)
-    const r = options[vue];
-    if (r && r.ok) {
-      let n = 0;
-      r.etapes.filter(e => e.type === 'M').forEach(e => {
-        n++; const x = X(e.lon1), y = Y(e.lat1);
-        doc.setDrawColor(255, 255, 255); doc.setLineWidth(1.1); doc.circle(x, y, 1.9, 'S');
-        doc.setDrawColor(208, 0, 0); doc.setLineWidth(0.55); doc.circle(x, y, 1.9, 'S');
-        U.texte(`${n}  +${((e.h2 - e.h1) / e.duree).toFixed(1)}`, x + 2.6, y + 1, { taille: 7, gras: true, couleur: [170, 0, 0] });
-      });
-    }
+    // spirales de toutes les options : rouge pour l'option affichée, couleur de l'option sinon ; « A1 = B1 » si partagée
+    (C.spirales || []).slice().reverse().forEach(sp => {
+      const actif = sp.options.includes(vue), x = X(sp.lon), y = Y(sp.lat), c = actif ? [208, 0, 0] : hex(COULEURS[sp.options[0]]);
+      doc.setDrawColor(255, 255, 255); doc.setLineWidth(1.1); doc.circle(x, y, actif ? 1.9 : 1.6, 'S');
+      doc.setDrawColor(...c); doc.setLineWidth(actif ? 0.55 : 0.45); doc.circle(x, y, actif ? 1.9 : 1.6, 'S');
+      const s = `${sp.tags.join('=')}  +${sp.vz.toFixed(1)}`; doc.setFontSize(actif ? 7 : 6.5); doc.setFont('helvetica', 'bold');
+      const aGauche = x + 2.5 + doc.getTextWidth(s) > mx + mW - 2;
+      U.texte(s, aGauche ? x - 2.5 : x + 2.5, y + 1, { taille: actif ? 7 : 6.5, gras: true, couleur: actif ? [170, 0, 0] : c, align: aGauche ? 'right' : 'left' });
+    });
     // noms des points
     // (points confondus — ex. départ et arrivée au même terrain — regroupés en une seule étiquette)
     const etq = [];
@@ -218,7 +216,7 @@
       U.texte(lignes[i], lx + 12, yy, { taille: 7.2, gras: i === vue, halo: false }); yy += 4.6;
     });
     doc.setDrawColor(208, 0, 0); doc.setLineWidth(0.5); doc.circle(lx + 6.5, yy + 0.2, 1.4, 'S');
-    U.texte('spirale (n°  m/s) — détail page suivante', lx + 12, yy + 1, { taille: 7, halo: false }); yy += 4.6;
+    U.texte(options.length > 1 ? 'spirale (B2 = 2e de l\'option B, m/s) — détail par option' : 'spirale (n°, m/s) — détail page suivante', lx + 12, yy + 1, { taille: 7, halo: false }); yy += 4.6;
     doc.setDrawColor(112, 72, 232); doc.circle(lx + 6.5, yy + 0.2, 1.4, 'S');
     U.texte('cylindre / point du circuit', lx + 12, yy + 1, { taille: 7, halo: false }); yy += 4.6;
     // rampe d'altitudes
@@ -299,7 +297,7 @@
     // spirales
     const ls = []; let t = 0, dist = 0, n = 0;
     for (const e of E) {
-      if (e.type === 'M') { n++; ls.push([n, Math.round(dist), hms(t), `${Math.round(e.h1)} > ${Math.round(e.h2)}`, ((e.h2 - e.h1) / e.duree).toFixed(1), hms(e.duree).replace(/^0:/, ''), `${dm(e.lat1, 'N', 'S')} ${dm(e.lon1, 'E', 'W')}`]); }
+      if (e.type === 'M') { n++; ls.push([LETTRES[i] + n, Math.round(dist), hms(t), `${Math.round(e.h1)} > ${Math.round(e.h2)}`, ((e.h2 - e.h1) / e.duree).toFixed(1), hms(e.duree).replace(/^0:/, ''), `${dm(e.lat1, 'N', 'S')} ${dm(e.lon1, 'E', 'W')}`]); }
       t += e.duree; dist += e.dist || 0;
     }
     U.texte('Spirales (numéros de la carte)', 150, 88, { taille: 9, gras: true, halo: false });
