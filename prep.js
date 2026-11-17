@@ -11,6 +11,7 @@
     { id: 'tache_versoud_aubenasson', titre: 'Le Versoud → Aubenasson (CdF J1R3)' },
     { id: 'tache_gap_fayence', titre: 'Gap-Tallard → Fayence (CdF 2025 É4)', meteo: { vdir: 295, vkmh: 16, pmax: 3400, pmin: 2800, vz: 3.7, src: 'CDF2025-Epreuve_4_CC.fpl' } },
     { id: 'tache_cdf_qualif2', titre: 'Veynes → Challes (CdF 2025 Qualif 2)', meteo: { vdir: 290, vkmh: 15, pmax: 3750, pmin: 3150, vz: 3.7, src: 'CDF2025_Qualif_2A_-_2_CC.fpl' } },
+    { id: 'tache_cdf_qualif2_d2', titre: 'Veynes → Challes (CdF 2025 Q2A2, départ 1800 m)', meteo: { vdir: 290, vkmh: 15, pmax: 3750, pmin: 3150, vz: 3.7, src: 'C3-c044a_CdF2025V2-Q2A2-AspresSurBuech-Challes_D2_CC.fpl' } },
     { id: 'tache_vsc_gap_192', titre: 'Gap-Tallard 192 km (VSC, vent du nord)', meteo: { vdir: 0, vkmh: 31, pmax: 3500, pmin: 3500, vz: 5.5, src: 'VSC_AA3_GapTallard_192km_STD_CC.fpl' } },
     { id: 'tache_vsc_gap_viso', titre: 'Gap-Tallard → Viso → Serres 214 km (VSC 18 m)', meteo: { vdir: 300, vkmh: 25, pmax: 3650, pmin: 3650, vz: 3.7, src: 'VSC_AA3_Gap_18m_214km_CC.fpl' } },
     { id: 'tache_coyote_suisse', titre: 'Emmen → Schallenberg → Susten → Dagmersellen (Vol du Coyote, Suisse)', meteo: { vdir: 125, vkmh: 12, pmax: 2750, pmin: 2750, vz: 1.9, src: 'Le_Vol_du_Coyote_151126_CC.fpl' } },
@@ -233,7 +234,8 @@
     for (const c of CIRCUITS) {
       if (!tachesSite[c.id]) tachesSite[c.id] = await fetch(`prep/${c.id}/donnees.json?v=${VERSION}`).then(r => r.ok ? r.json() : null).then(D => D && D.tache).catch(() => null);
       const T = tachesSite[c.id];
-      if (T && T.length === t.length && T.every((p, k) => Math.hypot((p.lat - t[k].lat) * 111.2, (p.lon - t[k].lon) * 78) < 1)) return c;
+      if (T && T.length === t.length && T.every((p, k) => Math.hypot((p.lat - t[k].lat) * 111.2, (p.lon - t[k].lon) * 78) < 1)
+          && Math.abs((T[0].hmax || 10000) - (t[0].hmax || 10000)) < 50) return c;   // même tâche ET même hauteur de départ
     }
     return null;
   }
