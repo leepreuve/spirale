@@ -102,7 +102,8 @@
     try {
       const meteo = $('p-meteo-resume').innerHTML.split('<br>').map(h => h.replace(/<[^>]+>/g, '').trim()).join(' · ');
       const nom = await window.SpiralePDF.generer({
-        D: etat.D, relief: etat.relief, options: etat.options, vue: etat.vue, LETTRES, COULEURS, hms, spirales: spiralesOptions(),
+        D: etat.D, relief: etat.relief, options: etat.options, vue: etat.vue, LETTRES, COULEURS, hms, spirales: spiralesOptions(), cols: colsOptions(),
+        critiques: etat.options.map(o => o.ok ? critiquesDe(o) : null),
         version: 'V' + ((window.SPIRALE_VERSION || {}).numero || ''),
         sousTitre: `${meteo} · Diana 2${$('p-ballast').checked ? ' ballastée' : ''} · ${$('p-ia').checked && etat.ia ? 'carte IA' : 'thermiques kk7'}`,
       });
@@ -668,12 +669,53 @@
     spiralesOptions().forEach(sp => {
       const actif = sp.options.includes(etat.vue), i = sp.options[0], coul = actif ? '#d00' : COULEURS[i];
       const tags = sp.tags.join(' = ');
-      const html = actif ? `<b>${tags}</b> · +${sp.vz.toFixed(1)} m/s<br>${Math.round(sp.h1)} → ${Math.round(sp.h2)} m`
-        : `<span style="color:${COULEURS[i]}"><b>${tags}</b> +${sp.vz.toFixed(1)}</span>`;
+      const alerte = sp.niveau === 'critique' ? '<span class="alerte crit">⚠ CRITIQUE</span> ' : sp.niveau === 'importante' ? '<span class="alerte imp">! bas</span> ' : '';
+      const html = actif ? `${alerte}<b>${tags}</b> · +${sp.vz.toFixed(1)} m/s<br>${Math.round(sp.h1)} → ${Math.round(sp.h2)} m`
+        : `${alerte}<span style="color:${COULEURS[i]}"><b>${tags}</b> +${sp.vz.toFixed(1)}</span>`;
+      if (sp.niveau === 'critique') L.circleMarker([sp.lat, sp.lon], { radius: actif ? 13 : 11, color: '#f08c00', weight: 4, opacity: 0.9, fill: false, interactive: false }).addTo(calques.trajet);
       L.circleMarker([sp.lat, sp.lon], { radius: actif ? 8 : 6, color: coul, weight: actif ? 3 : 2.5, fill: false, dashArray: actif ? null : '3 2' })
         .bindTooltip(html, { permanent: true, direction: 'left', className: actif ? 'etq-spirale' : 'etq-spirale autre', offset: [actif ? -8 : -6, 0] })
         .addTo(calques.trajet);
     });
+    colsOptions().forEach(c => {
+      const actif = c.options.includes(etat.vue), coul = actif ? '#e8590c' : COULEURS[c.options[0]], k = c.col;
+      const detail = `<b>Col délicat</b> (${c.tags.join(', ')}) · km ${Math.round(k.km)}<br>sol ${k.sol} m · passage à ${k.alt} m (${k.marge} m de marge)<br>` +
+        `quitter ${k.apres ? 'la pompe ' + LETTRES[c.options[0]] + k.apres : 'le départ'} à ≥ ${k.besoin} m · plafond ${k.plafondPompe} m (réserve ${k.reserve} m)`;
+      L.marker([k.lat, k.lon], { icon: L.divIcon({ className: 'etq-col', html: `<i style="--c:${coul}"></i>`, iconSize: [18, 18] }) })
+        .bindTooltip(actif ? `▲ col ${k.sol} m · quitter à ≥ ${k.besoin} m` : `▲ ${c.tags.join(', ')}`, { permanent: true, direction: 'right', className: 'etq-col-txt' + (actif ? '' : ' autre'), offset: [8, 0] })
+        .bindPopup(detail).addTo(calques.trajet);
+    });
+  }
+  // ----- zones critiques (prep-critique.js) : calculées une fois par option
+  function solRelief(la, lo) {
+    const R = etat.D.relief, Z = etat.relief, i = Math.round((la - R.lat[0]) / (R.lat[1] - R.lat[0])), j = Math.round((lo - R.lon[0]) / (R.lon[1] - R.lon[0]));
+    return i < 0 || j < 0 || i >= R.lat.length || j >= R.lon.length ? 0 : Z[i * R.lon.length + j];
+  }
+  function critiquesDe(o) {
+    if (!o.critiques) o.critiques = window.zonesCritiques && etat.relief ? window.zonesCritiques(o, { thermiques: o.thermiques || [], sol: solRelief, marge: +$('p-marge').value || 150 }) : { pompes: [], cols: [] };
+    return o.critiques;
+  }
+  function colsOptions() {
+    const L_ = [], ordre = [etat.vue, ...etat.options.map((o, i) => i).filter(i => i !== etat.vue)];
+    for (const i of ordre) {
+      const o = etat.options[i]; if (!o || !o.ok) continue;
+      critiquesDe(o).cols.filter(c => c.delicat).forEach(col => {
+        const m = L_.find(x => distKm(x.col, col) < 1);
+        if (m) { m.tags.push(LETTRES[i]); m.options.push(i); } else L_.push({ col, tags: [LETTRES[i]], options: [i] });
+      });
+    }
+    return L_;
+  }
+  function majCritiques(r) {           // liste lisible sous le tableau des branches
+    const z = critiquesDe(r), L_ = LETTRES[etat.vue], lignes = [];
+    z.pompes.forEach(p => lignes.push({ km: p.km, html: p.niveau === 'critique'
+      ? `<b class="alerte crit">⚠ ${L_}${p.n}</b> km ${Math.round(p.km)} · pompe <b>critique</b> : arrivée à ${p.hauteurArrivee} m/sol, ${p.alternatives === 0 ? 'aucune autre pompe' : p.alternatives === 1 ? 'une seule autre pompe' : 'deux autres pompes seulement'} à portée ; sans elle il manque ${p.manque} m ${p.raison === 'arrivee' ? 'pour finir' : `pour passer le relief à ${p.obstacle.sol} m (km ${Math.round(p.obstacle.km)})`}.`
+      : `<b class="alerte imp">! ${L_}${p.n}</b> km ${Math.round(p.km)} · arrivée basse (${p.hauteurArrivee} m/sol) : repérer une pompe de secours.` }));
+    z.cols.filter(c => c.delicat).forEach(c => lignes.push({ km: c.km, html:
+      `<b class="alerte col">▲ col</b> km ${Math.round(c.km)} · sol ${c.sol} m franchi avec ${c.marge} m de marge : quitter ${c.apres ? `${L_}${c.apres}` : 'le départ'} à ≥ ${c.besoin} m (plafond ${c.plafondPompe} m, il reste ${c.reserve} m).` }));
+    lignes.sort((a, b) => a.km - b.km);
+    $('r-critiques').innerHTML = lignes.length ? `<h2 class="r-titre2">Points critiques · option ${L_}</h2><ul>${lignes.map(l => `<li>${l.html}</li>`).join('')}</ul>`
+      : `<h2 class="r-titre2">Points critiques · option ${L_}</h2><p class="aide">Aucune pompe isolée ni col délicat sur ce trajet.</p>`;
   }
   // liste des spirales de toutes les options, regroupées quand elles tombent au même endroit (< 300 m)
   function spiralesOptions() {
@@ -682,10 +724,11 @@
       const o = etat.options[i]; if (!o || !o.ok) continue;
       let n = 0;
       o.etapes.filter(e => e.type === 'M').forEach(e => {
-        n++; const tag = LETTRES[i] + n;
+        n++; const tag = LETTRES[i] + n, c = critiquesDe(o).pompes.find(p => p.n === n), niv = c ? c.niveau : null;
         const m = L_.find(x => distKm({ lat: x.lat, lon: x.lon }, { lat: e.lat1, lon: e.lon1 }) < 0.3);
-        if (m) { m.tags.push(tag); m.options.push(i); }
-        else L_.push({ lat: e.lat1, lon: e.lon1, h1: e.h1, h2: e.h2, vz: (e.h2 - e.h1) / e.duree, tags: [tag], options: [i] });
+        const rang = (v) => v === 'critique' ? 2 : v === 'importante' ? 1 : 0;
+        if (m) { m.tags.push(tag); m.options.push(i); if (rang(niv) > rang(m.niveau)) m.niveau = niv; }
+        else L_.push({ lat: e.lat1, lon: e.lon1, h1: e.h1, h2: e.h2, vz: (e.h2 - e.h1) / e.duree, tags: [tag], options: [i], niveau: niv });
       });
     }
     return L_;
@@ -695,7 +738,7 @@
   const hms = (s) => { s = Math.round(s); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60; return `${h}:${String(m).padStart(2, '0')}:${String(x).padStart(2, '0')}`; };
   function viderResultat() {
     $('r-temps').textContent = '—'; $('r-vitesse').textContent = ''; $('r-detail').textContent = '';
-    $('r-branches').innerHTML = ''; calques.trajet.clearLayers(); dessinerProfil(null);
+    $('r-branches').innerHTML = ''; $('r-critiques').innerHTML = ''; calques.trajet.clearLayers(); dessinerProfil(null);
   }
   function afficherResultat(r) {
     if (!r.ok) {
@@ -719,6 +762,7 @@
       html += `<tr><td>${T[i + 1].nom.replace(/^(Départ|Arrivée) /, '')}</td><td>${d.toFixed(1)}</td><td>${hms(x.t)}</td><td>${Math.round(d / (x.t / 3600))}</td><td>${Math.round(100 * x.spi / x.t)} %</td><td>${x.gain < 0 ? '−' : '+'}${Math.abs(Math.round(x.gain))}</td><td>${Math.round(x.h)}</td></tr>`;
     }
     $('r-branches').innerHTML = html + '</tbody>';
+    majCritiques(r);
     dessinerProfil(r);
     $('p-igc').disabled = false; $('p-pdf').disabled = false;
     etatTexte(`Calcul fait en ${r.dureeCalcul.toFixed(1)} s (${r.nbPoints.toLocaleString('fr-FR')} points, dont ${r.nbPassage} de contournement).` + (r.plafondsReleves ? ` ⚠ Plafonds relevés de ${r.plafondsReleves.de} m` + (r.plafondsReleves.points.length ? ` : ${r.plafondsReleves.points.map(t => t.nom).join(', ')} trop haut pour les plafonds réglés.` : ' pour trouver un passage.') : ''));

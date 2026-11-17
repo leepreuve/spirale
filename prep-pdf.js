@@ -162,11 +162,19 @@
       }
     }
     // spirales de toutes les options : rouge pour l'option affichée, couleur de l'option sinon ; « A1 = B1 » si partagée
+    // cols délicats : losange orange (option affichée) ou couleur de l'option
+    (C.cols || []).forEach(k => {
+      const actif = k.options.includes(vue), x = X(k.col.lon), y = Y(k.col.lat), c = actif ? [232, 89, 12] : hex(COULEURS[k.options[0]]), d = actif ? 2 : 1.6;
+      doc.setFillColor(...c); doc.setDrawColor(255, 255, 255); doc.setLineWidth(0.45);
+      doc.lines([[d, d], [-d, d], [-d, -d], [d, -d]], x, y - d, [1, 1], 'FD', true);
+      U.texte(actif ? `col ${k.col.sol} m : >= ${k.col.besoin} m` : `col ${k.tags.join(',')}`, x + 2.8, y + 1, { taille: actif ? 6.8 : 6, gras: true, couleur: actif ? [179, 71, 0] : c });
+    });
     (C.spirales || []).slice().reverse().forEach(sp => {
       const actif = sp.options.includes(vue), x = X(sp.lon), y = Y(sp.lat), c = actif ? [208, 0, 0] : hex(COULEURS[sp.options[0]]);
+      if (sp.niveau === 'critique') { doc.setDrawColor(240, 140, 0); doc.setLineWidth(0.9); doc.circle(x, y, actif ? 3.1 : 2.7, 'S'); }
       doc.setDrawColor(255, 255, 255); doc.setLineWidth(1.1); doc.circle(x, y, actif ? 1.9 : 1.6, 'S');
       doc.setDrawColor(...c); doc.setLineWidth(actif ? 0.55 : 0.45); doc.circle(x, y, actif ? 1.9 : 1.6, 'S');
-      const s = `${sp.tags.join('=')}  +${sp.vz.toFixed(1)}`; doc.setFontSize(actif ? 7 : 6.5); doc.setFont('helvetica', 'bold');
+      const s = `${sp.niveau === 'critique' ? '! ' : ''}${sp.tags.join('=')}  +${sp.vz.toFixed(1)}`; doc.setFontSize(actif ? 7 : 6.5); doc.setFont('helvetica', 'bold');
       const aGauche = x + 2.5 + doc.getTextWidth(s) > mx + mW - 2;
       U.texte(s, aGauche ? x - 2.5 : x + 2.5, y + 1, { taille: actif ? 7 : 6.5, gras: true, couleur: actif ? [170, 0, 0] : c, align: aGauche ? 'right' : 'left' });
     });
@@ -198,7 +206,7 @@
 
     // légende
     const lignes = options.map((o, i) => o.ok ? `${LETTRES[i]}  ${hms(o.tempsTotal)} · ${(o.distanceCircuit / (o.tempsTotal / 3600)).toFixed(1)} km/h · ${o.variante || ''}` : null);
-    const nL = lignes.filter(Boolean).length, lh = 10 + 4.6 * nL + 18;
+    const nL = lignes.filter(Boolean).length, lh = 10 + 4.6 * nL + 27.2;
     const occupe = [];                                     // tout ce qu'il ne faut pas cacher
     options.forEach(o => o.ok && pointsTrajet(o).forEach(([la, lo]) => occupe.push([X(lo), Y(la)])));
     T.forEach(t => { for (let k = 0; k < 12; k++) occupe.push([X(t.lon) + 2 + 3 * k, Y(t.lat)]); });
@@ -217,7 +225,11 @@
     });
     doc.setDrawColor(208, 0, 0); doc.setLineWidth(0.5); doc.circle(lx + 6.5, yy + 0.2, 1.4, 'S');
     U.texte(options.length > 1 ? 'spirale (B2 = 2e de l\'option B, m/s) — détail par option' : 'spirale (n°, m/s) — détail page suivante', lx + 12, yy + 1, { taille: 7, halo: false }); yy += 4.6;
-    doc.setDrawColor(112, 72, 232); doc.circle(lx + 6.5, yy + 0.2, 1.4, 'S');
+    doc.setDrawColor(240, 140, 0); doc.setLineWidth(0.8); doc.circle(lx + 6.5, yy + 0.2, 2, 'S');
+    U.texte('! pompe critique (isolée : à ne pas rater)', lx + 12, yy + 1, { taille: 7, halo: false }); yy += 4.6;
+    doc.setFillColor(232, 89, 12); doc.lines([[1.4, 1.4], [-1.4, 1.4], [-1.4, -1.4], [1.4, -1.4]], lx + 6.5, yy - 1.2, [1, 1], 'F', true);
+    U.texte('col délicat (altitude mini en quittant la pompe)', lx + 12, yy + 1, { taille: 7, halo: false }); yy += 4.6;
+    doc.setDrawColor(112, 72, 232); doc.setLineWidth(0.5); doc.circle(lx + 6.5, yy + 0.2, 1.4, 'S');
     U.texte('cylindre / point du circuit', lx + 12, yy + 1, { taille: 7, halo: false }); yy += 4.6;
     // rampe d'altitudes
     const rx = lx + 3, rw = 72, alts = [0, 1000, 2000, 3000, 4000];
@@ -305,11 +317,27 @@
     else U.texte('Aucune spirale : le trajet se fait en cheminement.', 150, 95, { taille: 8, halo: false });
     if (ls.length > 22) U.texte(`… et ${ls.length - 22} autres`, 150, 94 + 23 * 4.4, { taille: 7, halo: false });
 
+    // points critiques de l'option
+    const z = (C.critiques || [])[i], pc = [];
+    if (z) {
+      z.pompes.forEach(p => pc.push([p.km, p.niveau === 'critique' ? `! ${LETTRES[i]}${p.n}` : `${LETTRES[i]}${p.n}`, Math.round(p.km),
+        p.niveau === 'critique' ? `Pompe critique : arrivée à ${p.hauteurArrivee} m/sol, ${p.alternatives === 0 ? 'aucune autre pompe' : p.alternatives === 1 ? 'une seule autre pompe' : 'deux autres pompes seulement'} à portée ; sans elle il manque ${p.manque} m ${p.raison === 'arrivee' ? 'pour finir' : `(relief à ${p.obstacle.sol} m, km ${Math.round(p.obstacle.km)})`}.`
+          : `Arrivée basse (${p.hauteurArrivee} m/sol) : repérer une pompe de secours.`]));
+      z.cols.filter(c => c.delicat).forEach(c => pc.push([c.km, 'col', Math.round(c.km),
+        `Sol ${c.sol} m franchi avec ${c.marge} m de marge : quitter ${c.apres ? LETTRES[i] + c.apres : 'le départ'} à au moins ${c.besoin} m (plafond ${c.plafondPompe} m, reste ${c.reserve} m).`]));
+      pc.sort((a, b) => a[0] - b[0]);
+    }
+    const yC = 94 + 4.4 * (Math.max(lb.length, Math.min(ls.length, 22)) + 2);
+    U.texte('Points critiques', 10, yC, { taille: 9, gras: true, halo: false, couleur: [179, 71, 0] });
+    if (pc.length) tableau(doc, U, 10, yC + 6, [['', 14], ['km', 10, 'r'], ['À savoir', 253]], pc.map(l => l.slice(1)), { gras: (k, j) => j === 0 });
+    else U.texte('Aucune pompe isolée ni col délicat sur ce trajet.', 10, yC + 6, { taille: 8, halo: false });
+    const yComp = yC + 6 + 4.4 * (pc.length + 2);
+
     // comparaison des options
     if (options.length > 1 && i === C.vue) {
       const A = options[0];
       const lc = options.map((o, k) => o.ok ? [LETTRES[k], o.variante || '', hms(o.tempsTotal), k ? `${o.tempsTotal >= A.tempsTotal ? '+' : '-'}${hms(Math.abs(o.tempsTotal - A.tempsTotal))}` : '—', (o.distanceCircuit / (o.tempsTotal / 3600)).toFixed(1)] : [LETTRES[k], 'impossible', '', '', '']);
-      const y = 94 + 4.4 * (lb.length + 2);
+      const y = yComp;
       U.texte('Comparaison des options', 10, y, { taille: 9, gras: true, halo: false });
       tableau(doc, U, 10, y + 6, [['', 8], ['Variante', 58], ['Temps', 20, 'r'], ['Écart', 22, 'r'], ['km/h', 22, 'r']], lc);
     }

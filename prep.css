@@ -156,3 +156,15 @@
 .cl-autre:disabled { opacity: .5; cursor: default; }
 
 .etq-spirale.autre { font-size: 10.5px; padding: 0 3px; opacity: .95; }
+
+/* ----- points critiques */
+.alerte { font-weight: 800; }
+.alerte.crit { color: #e8590c; }
+.alerte.imp { color: #c92a2a; }
+.alerte.col { color: #e8590c; }
+.r-critiques ul { margin: 6px 0 0; padding-left: 16px; font-size: 12px; display: flex; flex-direction: column; gap: 5px; }
+.etq-spirale .alerte { font-size: 10px; }
+.etq-col { background: none; border: 0; }
+.etq-col i { display: block; width: 12px; height: 12px; margin: 3px; transform: rotate(45deg); background: var(--c); border: 2px solid #fff; box-shadow: 0 0 2px rgba(0,0,0,.6); }
+.etq-col-txt { font-size: 11px; font-weight: 700; color: #b34700; padding: 1px 4px; }
+.etq-col-txt.autre { font-size: 10px; color: #555; }
