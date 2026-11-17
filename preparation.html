@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Spirale — préparation</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-  <link rel="stylesheet" href="style.css?v=20261117092751">
-  <link rel="stylesheet" href="prep.css?v=20261117092751">
-  <script src="acces.js?v=20261117092751"></script>
+  <link rel="stylesheet" href="style.css?v=20261117095113">
+  <link rel="stylesheet" href="prep.css?v=20261117095113">
+  <script src="acces.js?v=20261117095113"></script>
 </head>
 <body class="page-prep">
   <header class="barre">
@@ -61,6 +61,7 @@
       <div class="prep-actions">
         <button id="p-calculer" class="btn principal" type="button">Calculer le trajet optimal</button>
         <button id="p-igc" class="btn" type="button" disabled>Télécharger la trace IGC</button>
+        <button id="p-pdf" class="btn" type="button" disabled>Exporter en PDF</button>
         <p id="p-etat" class="etat" role="status"></p>
       </div>
 
@@ -146,8 +147,9 @@
   </main>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="version.js?v=20261117092751"></script>
-  <script src="prep-zones.js?v=20261117092751"></script>
-  <script src="prep.js?v=20261117092751"></script>
+  <script src="version.js?v=20261117095113"></script>
+  <script src="prep-zones.js?v=20261117095113"></script>
+  <script src="prep-pdf.js?v=20261117095113"></script>
+  <script src="prep.js?v=20261117095113"></script>
 </body>
 </html>

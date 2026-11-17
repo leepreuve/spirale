@@ -48,6 +48,70 @@
   };
   carte.setView([44.4, 6.2], 9);
 
+  // ----- carte en grand, cadrage sur les trajets, PDF : boutons sur la carte
+  const Boutons = L.Control.extend({
+    options: { position: 'topright' },
+    onAdd() {
+      const div = L.DomUtil.create('div', 'leaflet-bar carte-boutons');
+      const b = (titre, html, fn, id) => { const a = L.DomUtil.create('a', '', div); a.href = '#'; a.title = titre; a.setAttribute('role', 'button'); a.setAttribute('aria-label', titre); a.innerHTML = html; if (id) a.id = id;
+        L.DomEvent.on(a, 'click', (e) => { L.DomEvent.preventDefault(e); L.DomEvent.stopPropagation(e); fn(); }); };
+      b('Carte en grand (Échap pour revenir)', '<span class="ico-grand"></span>', () => carteGrande(), 'c-grand');
+      b('Cadrer sur les trajets proposés', '<span class="ico-cadrer"></span>', () => cadrerTrajets());
+      b('Exporter en PDF (carte de relief + trajets)', '<b class="ico-pdf">PDF</b>', () => exporterPDF());
+      L.DomEvent.disableClickPropagation(div);
+      return div;
+    },
+  });
+  new Boutons().addTo(carte);
+  // légende des trajets proposés, visible en mode carte en grand
+  const Legende = L.Control.extend({
+    options: { position: 'bottomleft' },
+    onAdd() { const d = L.DomUtil.create('div', 'carte-legende'); d.id = 'c-legende'; L.DomEvent.disableClickPropagation(d); L.DomEvent.disableScrollPropagation(d); return d; },
+  });
+  new Legende().addTo(carte);
+  function carteGrande(oui) {
+    const m = document.querySelector('main.prep');
+    oui = oui ?? !m.classList.contains('grande');
+    m.classList.toggle('grande', oui);
+    const a = document.getElementById('c-grand'); if (a) { a.classList.toggle('actif', oui); a.title = oui ? 'Revenir aux panneaux' : 'Carte en grand (Échap pour revenir)'; }
+    ecrire('spirale-carte-grande', oui ? 1 : 0);
+    setTimeout(() => { carte.invalidateSize(); dessinerProfil(etat.resultat); if (etat.options.length) cadrerTrajets(); }, 60);
+  }
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && document.querySelector('main.prep.grande')) carteGrande(false); });
+  function cadrerTrajets() {
+    const pts = [];
+    etat.options.forEach(o => o.ok && pointsTrajet(o).forEach(p => pts.push(p)));
+    if (etat.D) etat.D.tache.forEach(t => pts.push([t.lat, t.lon]));
+    if (pts.length) carte.fitBounds(pts, { padding: [30, 30] });
+  }
+  function majLegende() {
+    const d = document.getElementById('c-legende'); if (!d) return;
+    const A = etat.options[0];
+    if (!A) { d.innerHTML = ''; return; }
+    d.innerHTML = `<div class="cl-titre">${etat.D ? etat.D.titre : ''}</div>` + etat.options.map((o, i) => o.ok
+      ? `<button type="button" data-i="${i}" class="cl-option${i === etat.vue ? ' actif' : ''}" style="--c:${COULEURS[i]}"><i></i><b>${LETTRES[i]}</b> ${hms(o.tempsTotal)} <small>${(o.distanceCircuit / (o.tempsTotal / 3600)).toFixed(0)} km/h${i ? ` · ${o.tempsTotal >= A.tempsTotal ? '+' : '−'}${hms(Math.abs(o.tempsTotal - A.tempsTotal)).replace(/^0:/, '')}` : ''} · ${o.variante || ''}</small></button>`
+      : `<div class="cl-option"><b>${LETTRES[i]}</b> impossible</div>`).join('') +
+      `<button type="button" class="cl-autre" ${$('p-autre').disabled ? 'disabled' : ''}>+ ${$('p-autre').textContent}</button>`;
+    d.querySelectorAll('[data-i]').forEach(b => b.addEventListener('click', () => afficherOption(+b.dataset.i)));
+    d.querySelector('.cl-autre').addEventListener('click', () => { if (!$('p-autre').disabled) calculer('autre'); });
+  }
+  async function exporterPDF() {
+    const r = etat.options[etat.vue];
+    if (!r || !r.ok || !etat.relief) { etatTexte('Calcule d\'abord un trajet pour pouvoir l\'exporter en PDF.', true); return; }
+    const bouton = $('p-pdf'); bouton.disabled = true; bouton.textContent = 'Création du PDF…'; etatTexte('Création du PDF (carte de relief et trajets)…');
+    try {
+      const meteo = $('p-meteo-resume').innerHTML.split('<br>').map(h => h.replace(/<[^>]+>/g, '').trim()).join(' · ');
+      const nom = await window.SpiralePDF.generer({
+        D: etat.D, relief: etat.relief, options: etat.options, vue: etat.vue, LETTRES, COULEURS, hms,
+        version: 'V' + ((window.SPIRALE_VERSION || {}).numero || ''),
+        sousTitre: `${meteo} · Diana 2${$('p-ballast').checked ? ' ballastée' : ''} · ${$('p-ia').checked && etat.ia ? 'carte IA' : 'thermiques kk7'}`,
+      });
+      etatTexte(`PDF créé : ${nom}`);
+    } catch (err) {
+      etatTexte('Impossible de créer le PDF (' + err.message + ').', true);
+    } finally { bouton.disabled = false; bouton.textContent = 'Exporter en PDF'; }
+  }
+
   // ----- crêtes : repères (beige), thermiques de crête (orange) et vol de pente (bleu)
   calques.cretes = L.layerGroup().addTo(carte);
   function dessinerCretes() {
@@ -327,6 +391,7 @@
   $('p-calculer').addEventListener('click', () => calculer('nouveau'));
   $('p-autre').addEventListener('click', () => calculer('autre'));
   $('p-igc').addEventListener('click', telechargerIGC);
+  $('p-pdf').addEventListener('click', () => exporterPDF());
 
   // ----- chargement d'un circuit
   async function chargerCircuit(id) {
@@ -335,7 +400,7 @@
       try { etatTexte('Chargement des données de la région (une seule fois)…'); await chargerRegion(); }
       catch (err) { etatTexte('Données de la région introuvables (' + err.message + ').', true); return; }
     }
-    $('p-calculer').disabled = true; $('p-igc').disabled = true;
+    $('p-calculer').disabled = true; $('p-igc').disabled = true; $('p-pdf').disabled = true;
     etat.resultat = null; etat.options = []; etat.finOptions = false; etat.vue = 0; viderResultat(); majOptions();
     try {
       const perso = tachesPerso.find(d => d.id === id);
@@ -359,6 +424,7 @@
       majZones(); remplirBranches();
       dessinerCircuit(); dessinerThermiquesBruts();
       carte.fitBounds([[D.zone.latMin, D.zone.lonMin], [D.zone.latMax, D.zone.lonMax]], { padding: [10, 10] });
+      etat.relief = new Int16Array(relief.slice(0));                 // copie gardée pour le PDF (le worker prend l'original)
       worker.postMessage({ type: 'charger', D, relief }, [relief]);
     } catch (err) {
       etatTexte('Impossible de charger le circuit (' + err.message + ').', true);
@@ -454,6 +520,7 @@
     majComparaison();
     $('p-autre').disabled = !(A && A.ok) || n >= LETTRES.length || etat.calcul || !!etat.finOptions;
     $('p-autre').textContent = `Proposer une option ${LETTRES[n] || ''}`.trim();
+    majLegende();
   }
   function majComparaison() {
     const tab = $('r-comparaison'), n = etat.options.length, bloc = $('r-comparaison-bloc');
@@ -497,7 +564,7 @@
   function calculer(mode) {
     if (!etat.D || etat.charge !== etat.D.id || etat.calcul) return;
     etat.calcul = true; etat.mode = mode;
-    $('p-calculer').disabled = true; $('p-autre').disabled = true; $('p-igc').disabled = true;
+    $('p-calculer').disabled = true; $('p-autre').disabled = true; $('p-igc').disabled = true; $('p-pdf').disabled = true;
     (mode === 'nouveau' ? $('p-calculer') : $('p-autre')).textContent = 'Calcul en cours…';
     etatTexte(mode === 'nouveau' ? 'Calcul…' : 'Recherche d\'un autre itinéraire…');
     worker.postMessage({
@@ -629,11 +696,11 @@
     let html = '<thead><tr><th>Jusqu\'à</th><th>km</th><th>Temps</th><th>km/h</th><th>Spirale</th><th>Chem.</th><th>Alt.</th></tr></thead><tbody>';
     for (let i = 0; i < Math.min(n, br.length); i++) {
       const d = distKm(T[i], T[i + 1]), x = br[i];
-      html += `<tr><td>${T[i + 1].nom.replace(/^(Départ|Arrivée) /, '')}</td><td>${d.toFixed(1)}</td><td>${hms(x.t)}</td><td>${Math.round(d / (x.t / 3600))}</td><td>${Math.round(100 * x.spi / x.t)} %</td><td>+${Math.round(x.gain)}</td><td>${Math.round(x.h)}</td></tr>`;
+      html += `<tr><td>${T[i + 1].nom.replace(/^(Départ|Arrivée) /, '')}</td><td>${d.toFixed(1)}</td><td>${hms(x.t)}</td><td>${Math.round(d / (x.t / 3600))}</td><td>${Math.round(100 * x.spi / x.t)} %</td><td>${x.gain < 0 ? '−' : '+'}${Math.abs(Math.round(x.gain))}</td><td>${Math.round(x.h)}</td></tr>`;
     }
     $('r-branches').innerHTML = html + '</tbody>';
     dessinerProfil(r);
-    $('p-igc').disabled = false;
+    $('p-igc').disabled = false; $('p-pdf').disabled = false;
     etatTexte(`Calcul fait en ${r.dureeCalcul.toFixed(1)} s (${r.nbPoints.toLocaleString('fr-FR')} points, dont ${r.nbPassage} de contournement).` + (r.plafondsReleves ? ` ⚠ Plafonds relevés de ${r.plafondsReleves.de} m` + (r.plafondsReleves.points.length ? ` : ${r.plafondsReleves.points.map(t => t.nom).join(', ')} trop haut pour les plafonds réglés.` : ' pour trouver un passage.') : ''));
   }
   function distKm(a, b) {
@@ -759,5 +826,6 @@
   }
 
   meteoDuCircuit(CIRCUITS[0].id); majResumeMeteo();
+  if (lire('spirale-carte-grande', 0)) carteGrande(true);
   chargerCircuit(CIRCUITS[0].id);
 })();
