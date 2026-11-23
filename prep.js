@@ -15,6 +15,7 @@
     { id: 'tache_cdf26_s11', titre: 'CdF ePlaneur 2026 S1-1 · Mallemoisson → Saint-Crépin', meteo: { vdir: 294, vkmh: 14, pmax: 3430, pmin: 2725, vz: 3.7, src: 'tache_cdf26_s11_reconstitue.fpl' } },
     { id: 'tache_cdf26_s12', titre: 'CdF ePlaneur 2026 S1-2 · Saint-Crépin → Morestel', meteo: { vdir: 267, vkmh: 15, pmax: 3495, pmin: 2950, vz: 3.7, src: 'tache_cdf26_s12_reconstitue.fpl' } },
     { id: 'tache_cdf26_s13', titre: 'CdF ePlaneur 2026 S1-3 · Morestel → Pierrelatte', meteo: { vdir: 228, vkmh: 16, pmax: 2827, pmin: 2063, vz: 3.7, src: 'tache_cdf26_s13_reconstitue.fpl' } },
+    { id: 'tache_cc28804', titre: 'Les Mées → Simiane → Malaucène → Crest → Serres (CC 28804)', meteo: { vdir: 315, vkmh: 10, pmax: 3000, pmin: 2700, vz: 3.7, src: 'vent NO faible (Condor Club) — plafond et force estimés' } },
     { id: 'tache_vsc_gap_192', titre: 'Gap-Tallard 192 km (VSC, vent du nord)', meteo: { vdir: 0, vkmh: 31, pmax: 3500, pmin: 3500, vz: 5.5, src: 'VSC_AA3_GapTallard_192km_STD_CC.fpl' } },
     { id: 'tache_vsc_gap_viso', titre: 'Gap-Tallard → Viso → Serres 214 km (VSC 18 m)', meteo: { vdir: 300, vkmh: 25, pmax: 3650, pmin: 3650, vz: 3.7, src: 'VSC_AA3_Gap_18m_214km_CC.fpl' } },
     { id: 'tache_coyote_suisse', titre: 'Emmen → Schallenberg → Susten → Dagmersellen (Vol du Coyote, Suisse)', meteo: { vdir: 125, vkmh: 12, pmax: 2750, pmin: 2750, vz: 1.9, src: 'Le_Vol_du_Coyote_151126_CC.fpl' } },

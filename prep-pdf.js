@@ -134,7 +134,9 @@
     const mmParM = mW / wM;
 
     // en-tête
-    U.texte(`Spirale · ${D.titre}`, mx, 9, { taille: 15, gras: true, halo: false });
+    let tT = 15; doc.setFont('helvetica', 'bold');
+    while (tT > 9 && (doc.setFontSize(tT), doc.getTextWidth(txt(`Spirale · ${D.titre}`))) > PW - 2 * mx - 38) tT -= 0.5;   // titre long : on réduit
+    U.texte(`Spirale · ${D.titre}`, mx, 9, { taille: tT, gras: true, halo: false });
     U.texte(C.sousTitre, mx, 15, { taille: 8.5, halo: false, couleur: [80, 88, 100] });
     U.texte(new Date().toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }), PW - mx, 9, { taille: 8.5, align: 'right', halo: false, couleur: [80, 88, 100] });
 
