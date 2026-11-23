@@ -326,9 +326,10 @@
         tachesPerso.push(def); while (tachesPerso.length > 12) tachesPerso.shift();
         ecrire('spirale-taches-perso', tachesPerso);
       }
-      if (estFpl) { meteoCircuits[def.id] = txt; ecrire('spirale-meteo-circuits', meteoCircuits); }
+      if (estFpl) { meteoCircuits[def.id] = txt; ecrire('spirale-meteo-circuits', meteoCircuits); delete plafondsPerso[def.id]; ecrire('spirale-plafonds-perso', plafondsPerso); }
       $('p-circuit').value = def.id;
       const meteo = estFpl && appliquerMeteoFpl(txt, f.name);
+      if (estFpl) { plafondsFpl = { pmax: +$('p-pmax').value, pmin: +$('p-pmin').value }; majEtatPlafonds(); }
       $('p-tache-info').textContent = (connu ? `Circuit du site reconnu : ${connu.titre}` : `${def.titre} : ${def.tache.length - 1} branches`) +
         (meteo ? ' · météo du plan de vol appliquée (elle sera remise à chaque sélection de ce circuit).' : (estFpl ? '.' : ' (le .ftr ne contient pas la météo : charge le .fpl pour la régler).'));
       chargerCircuit(def.id, true);
@@ -377,15 +378,42 @@
   const METEO_NEUTRE = { vdir: 270, vkmh: 0, pmax: 3300, pmin: 1800, vz: 3.2 };
   function regler(id, v) { const el = $(id); el.value = Math.max(+el.min, Math.min(+el.max, v)); el.dispatchEvent(new Event('input')); }
   function meteoDuCircuit(id) {
-    if (meteoCircuits[id]) { appliquerMeteoFpl(meteoCircuits[id], ''); return; }
-    const c = CIRCUITS.find(x => x.id === id), m = (c && c.meteo) || METEO_NEUTRE;
-    regler('p-vdir', m.vdir); regler('p-vkmh', m.vkmh); regler('p-pmax', m.pmax); regler('p-pmin', m.pmin); regler('p-vz', m.vz);
-    $('p-fpl-info').textContent = c && c.meteo ? `Météo de la course : ${c.meteo.src}.` : 'Pas de plan de vol pour ce circuit : météo neutre. Charge le .fpl de la course pour avoir la vraie météo.';
+    if (meteoCircuits[id]) appliquerMeteoFpl(meteoCircuits[id], '');
+    else {
+      const c = CIRCUITS.find(x => x.id === id), m = (c && c.meteo) || METEO_NEUTRE;
+      regler('p-vdir', m.vdir); regler('p-vkmh', m.vkmh); regler('p-pmax', m.pmax); regler('p-pmin', m.pmin); regler('p-vz', m.vz);
+      $('p-fpl-info').textContent = c && c.meteo ? `Météo de la course : ${c.meteo.src}.` : 'Pas de plan de vol pour ce circuit : météo neutre. Charge le .fpl de la course pour avoir la vraie météo.';
+    }
+    plafondsFpl = { pmax: +$('p-pmax').value, pmin: +$('p-pmin').value };      // valeurs du plan de vol, pour le retour
+    const o = plafondsPerso[id];
+    if (o) { regler('p-pmax', o.pmax); regler('p-pmin', o.pmin); }
+    majEtatPlafonds();
   }
+  // ----- plafonds modifiés à la main (par circuit, gardés dans le navigateur)
+  const plafondsPerso = lire('spirale-plafonds-perso', {});
+  let plafondsFpl = null;
+  function majEtatPlafonds() {
+    const id = $('p-circuit').value, modif = !!plafondsPerso[id];
+    $('p-plafonds-etat').hidden = !modif; $('p-plafonds-reset').disabled = !modif;
+    majResumeMeteo();
+  }
+  ['p-pmax', 'p-pmin'].forEach(idc => $(idc).addEventListener('input', (e) => {
+    if (!e.isTrusted) return;                                 // réglage par le programme (plan de vol) : rien à retenir
+    const haut = $('p-pmax'), bas = $('p-pmin');
+    if (idc === 'p-pmax' && +bas.value > +haut.value) regler('p-pmin', +haut.value);   // la plaine ne dépasse pas la montagne
+    if (idc === 'p-pmin' && +bas.value > +haut.value) regler('p-pmax', +bas.value);
+    plafondsPerso[$('p-circuit').value] = { pmax: +haut.value, pmin: +bas.value };
+    ecrire('spirale-plafonds-perso', plafondsPerso); majEtatPlafonds();
+  }));
+  $('p-plafonds-reset').addEventListener('click', () => {
+    delete plafondsPerso[$('p-circuit').value]; ecrire('spirale-plafonds-perso', plafondsPerso);
+    if (plafondsFpl) { regler('p-pmax', plafondsFpl.pmax); regler('p-pmin', plafondsFpl.pmin); }
+    majEtatPlafonds();
+  });
   function majResumeMeteo() {
     const d = +$('p-vdir').value, k = +$('p-vkmh').value;
     $('p-meteo-resume').innerHTML = `<b>Vent</b> ${k ? `${d}° (${['N', 'NE', 'E', 'SE', 'S', 'SO', 'O', 'NO'][Math.round(d / 45) % 8]}) ${k} km/h` : 'nul'}<br>` +
-      `<b>Plafond</b> ${$('p-pmin').value} m en plaine → ${$('p-pmax').value} m en montagne<br><b>Thermiques</b> jusqu'à ${(+$('p-vz').value).toFixed(1)} m/s`;
+      `<b>Plafond</b> ${$('p-pmin').value} m en plaine → ${$('p-pmax').value} m en montagne${plafondsPerso[$('p-circuit').value] ? ' <span class="badge-modif">modifié</span>' : ''}<br><b>Thermiques</b> jusqu'à ${(+$('p-vz').value).toFixed(1)} m/s`;
   }
   ['p-vdir', 'p-vkmh', 'p-pmax', 'p-pmin', 'p-vz'].forEach(i => $(i).addEventListener('input', majResumeMeteo));
   $('p-circuit').addEventListener('change', () => {
