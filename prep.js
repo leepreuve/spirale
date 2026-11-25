@@ -16,6 +16,7 @@
     { id: 'tache_cdf26_s12', titre: 'CdF ePlaneur 2026 S1-2 · Saint-Crépin → Morestel', meteo: { vdir: 267, vkmh: 15, pmax: 3495, pmin: 2950, vz: 3.7, src: 'tache_cdf26_s12_reconstitue.fpl' } },
     { id: 'tache_cdf26_s13', titre: 'CdF ePlaneur 2026 S1-3 · Morestel → Pierrelatte', meteo: { vdir: 228, vkmh: 16, pmax: 2827, pmin: 2063, vz: 3.7, src: 'tache_cdf26_s13_reconstitue.fpl' } },
     { id: 'tache_cc28804', titre: 'Les Mées → Simiane → Malaucène → Crest → Serres (CC 28804)', meteo: { vdir: 315, vkmh: 10, pmax: 3000, pmin: 2700, vz: 3.7, src: 'vent NO faible (Condor Club) — plafond et force estimés' } },
+    { id: 'tache_aspres_challes', titre: 'Aspres → Gavet → St-Jean-de-Maurienne → Talloires → Challes', meteo: { vdir: 270, vkmh: 15, pmax: 3200, pmin: 2500, vz: 3.7, src: 'aucune météo connue — valeurs estimées, à régler avec « Modifier la météo »' } },
     { id: 'tache_vsc_gap_192', titre: 'Gap-Tallard 192 km (VSC, vent du nord)', meteo: { vdir: 0, vkmh: 31, pmax: 3500, pmin: 3500, vz: 5.5, src: 'VSC_AA3_GapTallard_192km_STD_CC.fpl' } },
     { id: 'tache_vsc_gap_viso', titre: 'Gap-Tallard → Viso → Serres 214 km (VSC 18 m)', meteo: { vdir: 300, vkmh: 25, pmax: 3650, pmin: 3650, vz: 3.7, src: 'VSC_AA3_Gap_18m_214km_CC.fpl' } },
     { id: 'tache_coyote_suisse', titre: 'Emmen → Schallenberg → Susten → Dagmersellen (Vol du Coyote, Suisse)', meteo: { vdir: 125, vkmh: 12, pmax: 2750, pmin: 2750, vz: 1.9, src: 'Le_Vol_du_Coyote_151126_CC.fpl' } },
@@ -326,10 +327,10 @@
         tachesPerso.push(def); while (tachesPerso.length > 12) tachesPerso.shift();
         ecrire('spirale-taches-perso', tachesPerso);
       }
-      if (estFpl) { meteoCircuits[def.id] = txt; ecrire('spirale-meteo-circuits', meteoCircuits); delete plafondsPerso[def.id]; ecrire('spirale-plafonds-perso', plafondsPerso); }
+      if (estFpl) { meteoCircuits[def.id] = txt; ecrire('spirale-meteo-circuits', meteoCircuits); delete plafondsPerso[def.id]; ecrire('spirale-meteo-perso', plafondsPerso); }
       $('p-circuit').value = def.id;
       const meteo = estFpl && appliquerMeteoFpl(txt, f.name);
-      if (estFpl) { plafondsFpl = { pmax: +$('p-pmax').value, pmin: +$('p-pmin').value }; majEtatPlafonds(); }
+      if (estFpl) { plafondsFpl = lireMeteo(); majEtatPlafonds(); }
       $('p-tache-info').textContent = (connu ? `Circuit du site reconnu : ${connu.titre}` : `${def.titre} : ${def.tache.length - 1} branches`) +
         (meteo ? ' · météo du plan de vol appliquée (elle sera remise à chaque sélection de ce circuit).' : (estFpl ? '.' : ' (le .ftr ne contient pas la météo : charge le .fpl pour la régler).'));
       chargerCircuit(def.id, true);
@@ -384,36 +385,39 @@
       regler('p-vdir', m.vdir); regler('p-vkmh', m.vkmh); regler('p-pmax', m.pmax); regler('p-pmin', m.pmin); regler('p-vz', m.vz);
       $('p-fpl-info').textContent = c && c.meteo ? `Météo de la course : ${c.meteo.src}.` : 'Pas de plan de vol pour ce circuit : météo neutre. Charge le .fpl de la course pour avoir la vraie météo.';
     }
-    plafondsFpl = { pmax: +$('p-pmax').value, pmin: +$('p-pmin').value };      // valeurs du plan de vol, pour le retour
+    plafondsFpl = lireMeteo();                                 // météo du plan de vol (ou de référence), pour le retour
     const o = plafondsPerso[id];
-    if (o) { regler('p-pmax', o.pmax); regler('p-pmin', o.pmin); }
+    if (o) CHAMPS_METEO.forEach(([k, el]) => { if (o[k] != null) regler(el, o[k]); });
     majEtatPlafonds();
   }
-  // ----- plafonds modifiés à la main (par circuit, gardés dans le navigateur)
-  const plafondsPerso = lire('spirale-plafonds-perso', {});
+  // ----- météo modifiée à la main (par circuit, gardée dans le navigateur)
+  const CHAMPS_METEO = [['vdir', 'p-vdir'], ['vkmh', 'p-vkmh'], ['pmax', 'p-pmax'], ['pmin', 'p-pmin'], ['vz', 'p-vz']];
+  const lireMeteo = () => Object.fromEntries(CHAMPS_METEO.map(([k, el]) => [k, +$(el).value]));
+  const plafondsPerso = Object.assign(lire('spirale-plafonds-perso', {}), lire('spirale-meteo-perso', {}));
   let plafondsFpl = null;
   function majEtatPlafonds() {
     const id = $('p-circuit').value, modif = !!plafondsPerso[id];
     $('p-plafonds-etat').hidden = !modif; $('p-plafonds-reset').disabled = !modif;
     majResumeMeteo();
   }
-  ['p-pmax', 'p-pmin'].forEach(idc => $(idc).addEventListener('input', (e) => {
+  CHAMPS_METEO.forEach(([, idc]) => $(idc).addEventListener('input', (e) => {
     if (!e.isTrusted) return;                                 // réglage par le programme (plan de vol) : rien à retenir
     const haut = $('p-pmax'), bas = $('p-pmin');
     if (idc === 'p-pmax' && +bas.value > +haut.value) regler('p-pmin', +haut.value);   // la plaine ne dépasse pas la montagne
     if (idc === 'p-pmin' && +bas.value > +haut.value) regler('p-pmax', +bas.value);
-    plafondsPerso[$('p-circuit').value] = { pmax: +haut.value, pmin: +bas.value };
-    ecrire('spirale-plafonds-perso', plafondsPerso); majEtatPlafonds();
+    plafondsPerso[$('p-circuit').value] = lireMeteo();
+    ecrire('spirale-meteo-perso', plafondsPerso); majEtatPlafonds();
   }));
   $('p-plafonds-reset').addEventListener('click', () => {
-    delete plafondsPerso[$('p-circuit').value]; ecrire('spirale-plafonds-perso', plafondsPerso);
-    if (plafondsFpl) { regler('p-pmax', plafondsFpl.pmax); regler('p-pmin', plafondsFpl.pmin); }
+    delete plafondsPerso[$('p-circuit').value]; ecrire('spirale-meteo-perso', plafondsPerso); ecrire('spirale-plafonds-perso', {});
+    if (plafondsFpl) CHAMPS_METEO.forEach(([k, el]) => regler(el, plafondsFpl[k]));
     majEtatPlafonds();
   });
   function majResumeMeteo() {
     const d = +$('p-vdir').value, k = +$('p-vkmh').value;
-    $('p-meteo-resume').innerHTML = `<b>Vent</b> ${k ? `${d}° (${['N', 'NE', 'E', 'SE', 'S', 'SO', 'O', 'NO'][Math.round(d / 45) % 8]}) ${k} km/h` : 'nul'}<br>` +
-      `<b>Plafond</b> ${$('p-pmin').value} m en plaine → ${$('p-pmax').value} m en montagne${plafondsPerso[$('p-circuit').value] ? ' <span class="badge-modif">modifié</span>' : ''}<br><b>Thermiques</b> jusqu'à ${(+$('p-vz').value).toFixed(1)} m/s`;
+    const modifie = (...ks) => plafondsPerso[$('p-circuit').value] && plafondsFpl && ks.some(x => Math.abs(+plafondsPerso[$('p-circuit').value][x] - plafondsFpl[x]) > 1e-6) ? ' <span class="badge-modif">modifié</span>' : '';
+    $('p-meteo-resume').innerHTML = `<b>Vent</b> ${k ? `${d}° (${['N', 'NE', 'E', 'SE', 'S', 'SO', 'O', 'NO'][Math.round(d / 45) % 8]}) ${k} km/h` : 'nul'}${modifie('vdir', 'vkmh')}<br>` +
+      `<b>Plafond</b> ${$('p-pmin').value} m en plaine → ${$('p-pmax').value} m en montagne${modifie('pmax', 'pmin')}<br><b>Thermiques</b> jusqu'à ${(+$('p-vz').value).toFixed(1)} m/s${modifie('vz')}`;
   }
   ['p-vdir', 'p-vkmh', 'p-pmax', 'p-pmin', 'p-vz'].forEach(i => $(i).addEventListener('input', majResumeMeteo));
   $('p-circuit').addEventListener('change', () => {
