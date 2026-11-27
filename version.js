@@ -1,2 +1,2 @@
 // Version du site, mise à jour à chaque publication
-window.SPIRALE_VERSION = { numero: '4.9', date: '2026-11-25T19:15:34+01:00' };
+window.SPIRALE_VERSION = { numero: '5.0', date: '2026-11-27T19:46:47+01:00' };
